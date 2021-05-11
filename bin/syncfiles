@@ -1,0 +1,198 @@
+#!/bin/env python
+
+##################################################################################################
+#  Name:        syncfiles                                                                        #
+#  Author:      Randy Johnson                                                                    #
+#  Description: Synchronizes files between the source and 1..n remote target hosts using rsync.  #
+#                                                                                                #
+# History:                                                                                       #
+#                                                                                                #
+# Date       Ver. Who              Change Description                                            #
+# ---------- ---- ---------------- ------------------------------------------------------------- #
+# 11/05/2012 1.00 Randy Johnson    Initial release.                                              #
+# 07/13/2017 1.01 Randy Johnson    Added program description to Usage.                           #
+##################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+from datetime   import datetime
+from optparse   import OptionParser
+from os.path    import basename
+from re         import match
+from socket     import gethostname
+from subprocess import Popen
+from subprocess import PIPE
+from subprocess import STDOUT
+from sys        import exit, argv
+from sys        import stdout
+
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  Cmd                 = basename(argv[0])
+  Interactive         = stdout.isatty()
+  CmdDesc             = 'Sync Files'
+  Version             = '1.01'
+  VersionDate         = 'Thu Jul 13 12:15:38 CDT 2017'
+  DevState            = 'Production'
+  Banner              = CmdDesc + ': Release ' + Version + ' '  + DevState + '. Last updated: ' + VersionDate
+  TargetHostsFilename = '/home/oracle/dba/etc/synchosts.txt'
+  SyncDirsFilename    = '/home/oracle/dba/etc/syncdirs.txt'
+  ManifestFilename    = '/home/oracle/dba/etc/.' + Cmd + '_manifest.txt'
+  TargetHostList      = []
+  SyncDirList         = []
+  TargetHost          = ''
+  SyncDir             = ''
+  ProcList            = []
+  SourceHostname      = gethostname()
+
+  # Process command line options
+  # ----------------------------------
+  Usage  = '\n\n-------------------------------------------------------------------------------'
+  Usage += '\nSynchronize files between the source and 1..n remote target hosts using rsync.'
+  Usage += '\n\n' + Cmd + ' [--v]'
+  Usage += '\n\n**Note:'
+  Usage += '\n  Target host, user, and directory info maintained in $HOME/dba/etc/synchosts.txt'
+  Usage += '\n  Source directory info maintained in $HOME/dba/etc/syncdirs.txt'
+  
+  parser = OptionParser(usage=Usage)
+  parser.add_option("--v", action="store_true",  dest="Version",    default=False, help="print version info.")
+  Option, Args = parser.parse_args()
+  Argc = len(Args)
+
+  # If -v option used then print the version banner and exit.
+  if (Option.Version):
+    print('\n' + Banner)
+    exit(0)
+
+  # Read in the target host, user & directory information (synchosts.txt)
+  try:
+    TargetHostFile = open(TargetHostsFilename, 'r')
+  except:
+    print('\nCannot open host file for read:', TargetHostsFilename)
+  
+  TargetHost = TargetHostFile.read()
+  for line in TargetHost.split('\n'):
+    if (not (match(r'^\s*$', line))):               # skip blank lines
+      if (line.count('#') >= 1):
+        line = line.split('#')[0]
+      if (line.count(':') == 2):                  # ignore lines that do not contain 2 colon's (:).
+        line = line.strip()
+        (TargetHostname, TargetUsername, TargetBaseDir) = line.split(':')
+        TargetHostname  = TargetHostname.strip()
+        TargetUsername  = TargetUsername.strip()
+        TargetBaseDir   = TargetBaseDir.strip()
+        TargetHostList.append((TargetHostname, TargetUsername, TargetBaseDir))
+
+  # Read in the list of source directories to synchronize (syncdirs.txt)
+  try:
+    SyncDirFile = open(SyncDirsFilename, 'r')
+  except:
+    print('\nCannot open directory file for read:', SyncDirsFilename)
+
+  SyncDir = SyncDirFile.read()
+  for line in SyncDir.split('\n'):
+    if (not (match(r'^\s*$', line))):               # skip blank lines
+      if (line.count('#') >= 1):
+        line = line.split('#')[0]
+      if (line.count(':') == 1):                  # ignore lines that do not contain 2 colon's (:).
+        line = line.strip()
+        (SourceBaseDir, SourceDir) = line.split(':')
+        SourceBaseDir = SourceBaseDir.strip()
+        SourceDir     = SourceDir.strip()
+        SyncDirList.append((SourceBaseDir, SourceDir))
+
+  # Print the synchronization plan...
+  print('\n%s started. %30s' % (Cmd, datetime.now().strftime("%Y-%m-%d %H:%M")))
+  print('  Syncing files according to the following plan:')
+  for (SourceBaseDir, SourceDir) in SyncDirList:
+    SourceDirectory = SourceBaseDir + '/' + SourceDir
+    FirstLoop = True
+    for (Hostname, Username, TargetBaseDir) in TargetHostList:
+      TargetDir = TargetBaseDir + '/' + SourceDir
+      if (FirstLoop):
+      	print('    %-15s: %-30s -> %-15s: %-30s' % (SourceHostname,SourceDirectory, Hostname,TargetDir))
+      	#print '    %-50s -> %-50s' % (SourceHostname +':'+ SourceDirectory, Hostname +':'+ TargetDir)
+      	FirstLoop = False
+      else:
+      	print('    %-45s   -> %-15s: %-30s' % ('',Hostname,TargetDir))
+      	#print '    %-50s -> %-50s' % ('', Hostname +':'+ TargetDir)
+
+  # Begin the sync process...
+  ErrChk = 0
+  print('\n  Begin sync process.')
+  for (SourceBaseDir, SourceDir) in SyncDirList:
+    for (Hostname, Username, TargetBaseDir) in TargetHostList:
+      SourceDirectory = SourceBaseDir + '/' + SourceDir
+      TargetDir = TargetBaseDir + '/' + SourceDir
+      
+      # Need to drop the last subdirectory off the TargetDir. 
+      tdlist = TargetDir.split('/')
+      tdlist.pop()
+      TargetDir = join(tdlist, '/')
+
+      proc = Popen(['/usr/bin/rsync', '-a', '--no-motd', '--safe-links', SourceDirectory, Username + '@' + Hostname + ':' + TargetDir], \
+       stdin=PIPE, stdout=PIPE, stderr=STDOUT, shell=False, universal_newlines=True, close_fds=True)
+      
+      if (Interactive):
+        #print('\r                                                                          ',)
+        print('\r  Forking rsync for %-45s' % (Hostname + ':' + TargetDir),)
+        stdout.flush()
+      else:
+        print('  Forking rsync for %-45s' % (Hostname + ':' + TargetDir))
+      ProcList.append((proc, Hostname, TargetDir))
+
+  if (Interactive):
+    print('\r                                                                            ',)
+    print('\r  Rsync started.')
+    stdout.flush()
+  else:
+    print('  Rsync started.\n')
+
+  # Wait until all rsync processes are finished.
+  CompletedProcList = []
+  for (proc, Hostname, TargetDir) in ProcList:
+    if (Interactive):
+      print('\r                                                                            ',)
+      print('\r  Waiting for rsync to complete: %-45s' % (Hostname + ':' + TargetDir),)
+      stdout.flush()
+    else:
+      print('  Waiting for rsync to complete: %-45s' % (Hostname + ':' + TargetDir))
+      
+    # Here is where wa wait. When an rsync process completes save its return code.
+    returncode = proc.wait()
+    if (returncode != 0):
+    	ErrChk += 1
+    CompletedProcList.append((proc, returncode, Hostname, TargetDir))
+  
+  if (Interactive):
+    print('\r                                                                            ',)
+    print('\r  Rsync complete.')
+    stdout.flush()
+  else:
+  	print('  Rsync complete.')
+
+  # Print out any errors that occured. An error is defined as return code != 0.
+  # Here is an example of an error from rsync...
+  #   ['building file list ... rsync: link_stat "/home/oracle/rsync/dba/etc" failed: No such file or directory (2)\n', 'done\n', ...'\n', 'sent 29 bytes  received 20 bytes  98.00 bytes/sec\n', 'total size is 0  speedup is 0.00\n', 'rsync error: some files/attrs were not transferred (see previous errors) (code 23) at main.c(1039) [sender=3.0.6]\n']
+  # -------------------------------------
+  if (ErrChk >= 1):
+    print('  Detected %s rsync errors. See below...' % (ErrChk))
+    for (proc, returncode, Hostname, TargetDir) in CompletedProcList:
+      Stdout = proc.stdout.readlines()
+      if (returncode != 0):
+        print() 
+        print('  >> Rsync failure: returncode=%s, TargetHost=%s, TargetDir=%s' % (returncode, Hostname, TargetDir))
+        for line in Stdout:
+          print('    ', line,)
+    print('\n%s complete. %30s' % (Cmd, datetime.now().strftime("%Y-%m-%d %H:%M")))
+    exit(ErrChk)
+
+  print('\n%s complete. %30s' % (Cmd, datetime.now().strftime("%Y-%m-%d %H:%M")))
+  exit(0)
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------

@@ -1,0 +1,49 @@
+#!/bin/bash
+
+# ----------------------------------------------------------------------------
+# Script to generate a heavy CPU load on the database servers.
+# The script is run as follows:
+#  > burn_cpu.sh {Db username} {Db Password} {number of concurrent sessions}
+#
+#  For example:
+#  > burn_cpu.sh rjohnson x 6 
+#
+# ----------------------------------------------------------------------------
+
+export user=$1
+export passwd=$2
+export parallel=$3
+
+burn_cpu() {
+  sqlplus -s<<EOF
+  $user/$passwd
+
+  set timing on
+
+  select to_char(sysdate,'YYYY-MM-DD HH24:MI:SS') as start_time from dual;
+
+  declare a number := 1;
+  begin for i in 1..1000000000
+  loop a := ( a + i )/11;
+  end loop;
+  end;
+/
+
+  select to_char(sysdate,'YYYY-MM-DD HH24:MI:SS') as end_time from dual;
+
+  exit
+EOF
+}
+
+JOBS=0
+
+while :; do
+  burn_cpu &
+
+  JOBS=`jobs | wc -l`
+  while [ "$JOBS" -ge "$parallel" ]; do
+    sleep 5
+    JOBS=`jobs | wc -l`
+  done
+
+done

@@ -1,0 +1,311 @@
+#!/bin/env python
+
+###################################################################################################
+# Name:         register_database                                                                 #
+# Author:       Randy Johnson                                                                     #
+# Description:  Generates and excutes srvctl commands to register the database, instances, and    #
+#               service names into the RAC cluster.                                               #
+# Dependencies: $ORACLE_HOME/bin/srvctl                                                           #
+#               $ASM_HOME/olsnodes                                                                #
+#                                                                                                 #
+# Usage: register_database [options]                                                              #
+#                                                                                                 #
+# Options:                                                                                        #
+#   -h, --help       show this help message and exit                                              #
+#   -n DBNAME        db_name                                                                      #
+#   -u DBUNIQUENAME  db_unique_name                                                               #
+#   -d DATADG        Data Diskgroup (+DATA)                                                       #
+#   -r RECODG        Reco Diskgroup (+RECO)                                                       #
+#   --s              Show commands. Do not execute.                                               #
+#   --v              Version info.                                                                #
+#                                                                                                 #
+# History:                                                                                        #
+#                                                                                                 #
+# Date       Ver. Who              Change Description                                             #
+# ---------- ---- ---------------- -------------------------------------------------------------- #
+# 10/29/2015 1.00 Randy Johnson    Initial release.                                               #
+###################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+import sys
+from datetime     import datetime
+from os.path      import basename
+from os.path      import dirname
+from os.path      import join as pathjoin
+from os.path      import split as pathsplit
+from sys          import argv
+from sys          import exit
+from optparse     import OptionParser
+from os           import environ
+from sys          import version_info
+from subprocess   import Popen
+from subprocess   import PIPE
+from subprocess   import STDOUT
+from Oracle       import GetNodes
+from Oracle       import IsExecutable
+from Oracle       import SetOracleEnv
+
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):      # if this is true, then this script is *not* being imported by another Python script.
+  Cmd            = pathsplit(argv[0])[1]
+  CmdDesc        = 'Register RAC Database (' + Cmd + ')'
+  Version        = '1.00'
+  VersionDate    = 'Thu Oct 29 09:16:39 CDT 2015'
+  DevState       = 'Production'
+  Banner         = CmdDesc + ': Release ' + Version + ' '  + DevState + '. Last updated: ' + VersionDate
+  ArgParser      = OptionParser()
+  RegCmd         = ''
+  NodeDict       = {}
+  InstDict       = {}
+  SrvctlDict     = {}
+  OracleSid      = ''
+  OracleHome     = ''
+
+  # Process command line options
+  # ----------------------------------
+  ArgParser = OptionParser()
+  ArgParser.add_option('-n',  dest='DbName',                             default='db_name',        type=str, help="db_name")
+  ArgParser.add_option('-u',  dest='DbUniqueName',                       default='db_unique_name', type=str, help="db_unique_name")
+  ArgParser.add_option('-d',  dest='DataDg',                             default='+DATA',          type=str, help="Data Diskgroup (+DATA)")
+  ArgParser.add_option('-r',  dest='RecoDg',                             default='+RECO',          type=str, help="Reco Diskgroup (+RECO)")
+  ArgParser.add_option('--s', dest='Show',         action='store_true', default=False,                       help="Show commands. Do not execute.")
+  ArgParser.add_option("--v", dest="ShowVersion",  action="store_true",  default=False,                      help="Version info.")
+
+  Options, args = ArgParser.parse_args()
+  argc = len(args)
+
+  if (Options.ShowVersion):
+    print('\n%s' % Banner)
+    exit()
+
+  DbName       = Options.DbName
+  DbUniqueName = Options.DbUniqueName
+  DataDg       = Options.DataDg
+  RecoDg       = Options.RecoDg
+  Show         = Options.Show
+
+  if (DbName == 'db_name'):
+    DbName = '[' + DbName + ']'
+
+  if (DbUniqueName == 'db_unique_name'):
+    DbUniqueName = '[' + DbUniqueName + ']'
+
+  # Check/setup the Oracle environment
+  # --------------------------------------
+  if ('ORACLE_SID' in list(environ.keys())):
+    OracleSid = environ['ORACLE_SID']
+  else:
+    if (version_info[0] >= 3):
+      OraSid = input("\nEnter ORACLE_SID: ")
+    else:
+      OraSid = raw_input("\nEnter ORACLE_SID: ")
+    if (OraSid != ''):
+      OracleSid,OracleHome = SetOracleEnv(OraSid)
+
+  # Set ORACLE_HOME if it failed to set using the oratab.
+  if ('ORACLE_HOME' in list(environ.keys())):
+    OracleHome = environ['ORACLE_HOME']
+  else:
+    if (version_info[0] >= 3):
+      OracleHome = input("\nEnter ORACLE_HOME: ")
+    else:
+      OracleHome = raw_input("\nEnter ORACLE_HOME: ")
+    if (OracleHome == ''):
+      print('ORACLE_HOME is required.')
+      exit(1)
+
+  # Set the srvctl command
+  # ------------------------
+  Srvctl = pathjoin(OracleHome, 'bin', 'srvctl')
+  if (not IsExecutable(Srvctl)):
+    print('The following command cannot be executed by this user account: %s' % Srvctl)
+    exit(1)
+
+  # Gather cluster info...
+  # ------------------------
+  NodeDict = GetNodes()
+
+  for NodeName in sorted(NodeDict.keys()):
+    InstDict[DbName + NodeDict[NodeName]] = {'NodeName' : NodeName, 'DbName' : DbName, 'NodeId' : NodeDict[NodeName], 'DbUniqueName' : DbUniqueName}
+
+  # Configurable settings....
+  # --------------------------
+  BackupSvcName = DbName + '_' + 'BACKUP'
+  AppSvcName    = DbName + '_' + 'APP'
+  ConnFoParms   = "-P basic -e SELECT"
+  Spfile        = DataDg + '/' + DbUniqueName.upper() + '/spfile' + DbName + '.ora'
+
+  #SrvctlCmd  = '# Register the database into the cluster.'
+  #SrvctlCmd  = '\n' + Srvctl + ' add database \\'
+  #SrvctlCmd += '\n -d ' + DbUniqueName + ' \\'
+  #SrvctlCmd += '\n -n ' + DbName + ' \\'
+  #SrvctlCmd += '\n -o ' + OracleHome + ' \\'
+  #SrvctlCmd += '\n -p ' + Spfile + ' \\'
+  #SrvctlCmd += '\n -y automatic \\'
+  #SrvctlCmd += '\n -a ' + DataDg + ',' + RecoDg + ' \\'
+  #SrvctlCmd += '\n -t immediate'
+
+  RegCmd = []
+  RegCmd.append(Srvctl)
+  RegCmd.append('add')
+  RegCmd.append('database')
+  RegCmd.append('-d')
+  RegCmd.append(DbUniqueName)
+  RegCmd.append('-n')
+  RegCmd.append(DbName)
+  RegCmd.append('-o')
+  RegCmd.append(OracleHome)
+  RegCmd.append('-p')
+  RegCmd.append(Spfile)
+  RegCmd.append('-y')
+  RegCmd.append('automatic')
+  RegCmd.append('-a')
+  RegCmd.append(DataDg + ',' + RecoDg)
+  RegCmd.append('-t')
+  RegCmd.append('immediate')
+  SrvctlDict['Db:' + DbName] = RegCmd
+
+  #SrvctlCmd += '\n\n# Register the instances into the cluster.'
+  #for InstName in sorted(InstDict.keys()):
+  #  SrvctlCmd += '\n' + Srvctl + ' add instance -d ' + DbUniqueName + ' -i ' + InstName + ' -n ' + InstDict[InstName]['NodeName']
+
+  for InstName in sorted(InstDict.keys()):
+    RegCmd = []
+    RegCmd.append(Srvctl)
+    RegCmd.append('add')
+    RegCmd.append('instance')
+    RegCmd.append('-d')
+    RegCmd.append(DbUniqueName)
+    RegCmd.append('-i')
+    RegCmd.append(InstName)
+    RegCmd.append('-n')
+    RegCmd.append(InstDict[InstName]['NodeName'])
+    SrvctlDict['Inst:' + InstName] = RegCmd
+
+  #SrvctlCmd += '\n\n# Register the service names into the cluster.'
+  #SrvctlCmd += '\n' + Srvctl + ' add service -d ' + DbUniqueName + ' -s ' + BackupSvcName.upper() + ' -r ' + ','.join(sorted(InstDict.keys())) + ' ' + ConnFoParms
+  #SrvctlCmd += '\n' + Srvctl + ' add service -d ' + DbUniqueName + ' -s ' + AppSvcName.upper()    + ' -r ' + ','.join(sorted(InstDict.keys())) + ' ' + ConnFoParms
+
+  RegCmd = []
+  RegCmd.append(Srvctl)
+  RegCmd.append('add')
+  RegCmd.append('service')
+  RegCmd.append('-d')
+  RegCmd.append(DbUniqueName)
+  RegCmd.append('-s')
+  RegCmd.append(BackupSvcName.upper())
+  RegCmd.append('-r')
+  RegCmd.append(','.join(sorted(InstDict.keys())))
+  RegCmd += ConnFoParms.split()
+  SrvctlDict['Svc:' + BackupSvcName] = RegCmd
+
+  RegCmd = []
+  RegCmd.append(Srvctl)
+  RegCmd.append('add')
+  RegCmd.append('service')
+  RegCmd.append('-d')
+  RegCmd.append(DbUniqueName)
+  RegCmd.append('-s')
+  RegCmd.append(AppSvcName.upper())
+  RegCmd.append('-r')
+  RegCmd.append(','.join(sorted(InstDict.keys())))
+  RegCmd += ConnFoParms.split()
+  SrvctlDict['Svc:' + AppSvcName] = RegCmd
+
+  for InstName in sorted(InstDict.keys()):
+    RegCmd = []
+    RegCmd.append(Srvctl)
+    RegCmd.append('add')
+    RegCmd.append('service')
+    RegCmd.append('-d')
+    RegCmd.append(DbUniqueName)
+    RegCmd.append('-s')
+    RegCmd.append(InstName)
+    RegCmd.append('-r')
+    RegCmd.append(InstName)
+    RegCmd += ConnFoParms.split()
+    SrvctlDict['Svc:' + InstName] = RegCmd
+
+  if(Show):
+    print('\n-----------cut-----------cut-----------cut-----------cut-----------cut-----------')
+    print('# Register the database into the cluster.')
+    SrvctlCmd = SrvctlDict['Db:' + DbName]
+    print('%s' % ' '.join(SrvctlCmd))
+
+    print('\n# Register the instances into the cluster.')
+    for InstName in sorted(InstDict.keys()):
+      SrvctlCmd = SrvctlDict['Inst:' + InstName]
+      print('%s' % ' '.join(SrvctlCmd))
+
+    print('\n# Register the service names into the cluster.')
+    for key in sorted(SrvctlDict.keys()):
+      if(key[0:4] == 'Svc:'):
+        SrvctlCmd = SrvctlDict[key]
+        print('%s' % ' '.join(SrvctlCmd))
+    print('-----------cut-----------cut-----------cut-----------cut-----------cut-----------')
+    exit()
+  else:
+    # Execute the Register Database Command
+    # ---------------------------------------
+    SrvctlCmd = SrvctlDict['Db:' + DbName]
+    print('\n%s' % ' '.join(SrvctlCmd))
+    if (version_info[0] >= 3):
+      Response = input("\nRegister Database? (y/N) ")
+    else:
+      Response = raw_input("\nRegister Database? (y/N) ")
+    if (Response.upper() == 'Y'):
+      proc = Popen(SrvctlCmd, stdin=PIPE, stdout=PIPE, stderr=STDOUT, shell=False, universal_newlines=True, close_fds=True)
+      rc = proc.wait()
+      Stdout = proc.stdout.read()
+      Stdout = Stdout.strip()
+      if (rc != 0):
+        print('Srvctl failed to register database. Error follows:\n')
+        print(Stdout)
+    else:
+      print('')
+
+    # Execute the Register Instances Commands
+    # ----------------------------------------
+    for InstName in sorted(InstDict.keys()):
+      SrvctlCmd = SrvctlDict['Inst:' + InstName]
+      print('\n%s' % ' '.join(SrvctlCmd))
+      if (version_info[0] >= 3):
+        Response = input("\nRegister Instance? (y/N) ")
+      else:
+        Response = raw_input("\nRegister Instance? (y/N) ")
+      if (Response.upper() == 'Y'):
+        proc = Popen(SrvctlCmd, stdin=PIPE, stdout=PIPE, stderr=STDOUT, shell=False, universal_newlines=True, close_fds=True)
+        rc = proc.wait()
+        Stdout = proc.stdout.read()
+        Stdout = Stdout.strip()
+        if (rc != 0):
+          print('Srvctl failed to register database. Error follows:\n')
+          print(Stdout)
+      else:
+        print('')
+
+    # Execute the Register Service Names Commands
+    # --------------------------------------------
+    for key in SrvctlDict.keys():
+      if(key[0:4] == 'Svc:'):
+        SrvctlCmd = SrvctlDict[key]
+        print('\n%s' % ' '.join(SrvctlCmd))
+        if (version_info[0] >= 3):
+          Response = input("\nRegister Service Name? (y/N) ")
+        else:
+          Response = raw_input("\nRegister Service Name? (y/N) ")
+        if (Response.upper() == 'Y'):
+          proc = Popen(SrvctlCmd, stdin=PIPE, stdout=PIPE, stderr=STDOUT, shell=False, universal_newlines=True, close_fds=True)
+          rc = proc.wait()
+          Stdout = proc.stdout.read()
+          Stdout = Stdout.strip()
+          if (rc != 0):
+            print('Srvctl failed to register database. Error follows:\n')
+            print(Stdout)
+        else:
+          print('')

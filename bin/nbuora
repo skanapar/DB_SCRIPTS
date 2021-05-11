@@ -1,0 +1,122 @@
+#!/bin/env python
+
+##################################################################################################################
+#  Name:        nbuora                                                                                           #
+#  Author:      Randy Johnson                                                                                    #
+#  Description: Takes Netbackup settings (client, policy, and schedule) and prints an example of RMAN channel    #
+#               allocation using the Netbackup NB_ORA_CLIENT, NB_ORA_POLICY, and NB_ORA_SCHED settings.          #
+#                                                                                                                #
+#  Usage:       nbuora [options]                                                                                 #
+#  Options:     -c Client    Netbackup client    (NB_ORA_CLIENT)                                                 #
+#               -s Scheule   Netbackup schedule  (NB_ORA_SCHED)                                                  #
+#               -p Policy    Netbackup policy    (NB_ORA_POLICY)                                                 #
+#               -h help      show this help message and exit                                                     #
+#               -v           show version information and exit                                                   #
+#                                                                                                                #
+# History:                                                                                                       #
+#                                                                                                                #
+# Date       Ver. Who              Change Description                                                            #
+# ---------- ---- ---------------- ----------------------------------------------------------------------------- #
+# 11/11/2016 1.00 Randy Johnson    Initial release.                                                              #
+##################################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+from os.path    import basename
+from optparse   import OptionParser
+from sys        import exit
+from sys        import argv
+from sys        import version_info
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  Cmd            = basename(argv[0])
+  Version        = '1.00'
+  CmdDesc        = 'NBU Oracle'
+  VersionDate    = 'Fri Nov 11 09:53:30 MST 2016'
+  DevState       = 'Production'
+  Banner         = CmdDesc + ': Release ' + Version + ' '  + DevState + '. Last updated: ' + VersionDate
+
+  Usage  = Cmd + ' [options]'
+  Usage += '\n\nOptions:'
+  Usage += '\n-c Client    Netbackup client    (NB_ORA_CLIENT)'
+  Usage += '\n-s Scheule   Netbackup schedule  (NB_ORA_SCHED)'
+  Usage += '\n-p Policy    Netbackup policy    (NB_ORA_POLICY)'
+  Usage += '\n-h help      show this help message and exit'
+  Usage += '\n-v           show version information and exit'
+  Usage += '\n\nExample: nbuora -s daily_L1 -c odbdev03-m3bk -p M4-DB-PDC-ORACLE'
+  Usage += '\n\nExample: nbuora'
+  Usage += '\n\nEnter Netbackup client: odbdev03-m3bk'
+  Usage += '\n\nEnter Netbackup policy: daily_L1'
+  Usage += '\n\nEnter Netbackup schedule: M4-DB-PDC-ORACLE'
+  Usage += '\n\nRMAN Example:'
+  Usage += "\n   ALLOCATE CHANNEL SBT1 DEVICE TYPE SBT FORMAT 'Backup_%d_%U' parms='ENV=(NB_ORA_SCHED=M4-DB-PDC-ORACLE, NB_ORA_CLIENT=odbdev03-m3bk, NB_ORA_POLICY=daily_L1)';"
+  Usage += '\n\nDixie Example:'
+  Usage += '\n   sbt_library = ENV=(NB_ORA_SCHED=M4-DB-PDC-ORACLE, NB_ORA_CLIENT=odbdev03-m3bk, NB_ORA_POLICY=daily_L1)'
+
+  ArgParser = OptionParser(add_help_option=False, usage=Usage)
+  ArgParser.add_option('-c',                       dest='Client',   default='')
+  ArgParser.add_option('-p',                       dest='Policy',   default='')
+  ArgParser.add_option('-s',                       dest='Schedule', default='')
+  ArgParser.add_option("-h", action="store_true",  dest="Help",     default=False)
+  ArgParser.add_option("-v", action="store_true",  dest="ShowVer",  default=False)
+
+  Option, Args = ArgParser.parse_args()
+  Argc = len(Args)
+
+  # Assign command line options to variables.
+  # ------------------------------------------
+  Help      = Option.Help
+  Client    = Option.Client
+  Policy    = Option.Policy
+  Schedule  = Option.Schedule
+  ShowVer   = Option.ShowVer
+
+  # Print version information and exit.
+  # -------------------------------------
+  if (ShowVer):
+    print('\n' + Banner)
+    exit(0)
+
+  # Print help screent and exit.
+  # -------------------------------------
+  if (Help):
+    print('\n' + Usage)
+    exit(0)
+
+  # If client is not passed on the command line, then prompt for it.
+  # -------------------------------------------------------------------
+  if (Client == ''):
+    if (version_info[0] >= 3):
+      Client = input('\nEnter Netbackup client: ')
+    else:
+      Client = raw_input('\nEnter Netbackup client: ')
+
+  # If policy is not passed on the command line, then prompt for it.
+  # -------------------------------------------------------------------
+  if (Policy == ''):
+    if (version_info[0] >= 3):
+      Policy = input('\nEnter Netbackup policy: ')
+    else:
+      Policy = raw_input('\nEnter Netbackup policy: ')
+
+  # If schedule is not passed on the command line, then prompt for it.
+  # -------------------------------------------------------------------
+  if (Schedule == ''):
+    if (version_info[0] >= 3):
+      Schedule = input('\nEnter Netbackup schedule: ')
+    else:
+      Schedule = raw_input('\nEnter Netbackup schedule: ')
+
+  # Print examples using these Netbackup for Oracle attributes.
+  # -------------------------------------------------------------------
+  print("\nRMAN Example:\n   ALLOCATE CHANNEL SBT1 DEVICE TYPE SBT FORMAT 'Backup_%%d_%%U' parms='ENV=(NB_ORA_CLIENT=%s, NB_ORA_POLICY=%s, NB_ORA_SCHED=%s)';" % (Client,Policy,Schedule))
+  #print("\nRMAN Example:\n   ALLOCATE CHANNEL SBT1 DEVICE TYPE SBT FORMAT 'Backup_%%d_%%U' parms='ENV=(NB_ORA_SCHED=%s, NB_ORA_CLIENT=%s, NB_ORA_POLICY=%s)';" % (Schedule,Client,Policy))
+  print("\nDixie Example:\n   sbt_library = ENV=(NB_ORA_CLIENT=%s, NB_ORA_POLICY=%s, NB_ORA_SCHED=%s)" % (Client,Policy,Schedule))
+  exit()
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------

@@ -1,0 +1,61 @@
+#!/usr/bin/perl
+
+sub numerals {
+   local($_) = @_;
+   1 while s/(.*\d)(\d\d\d)/$1,$2/;
+   $_;
+}
+
+sub numerically { $a <=> $b; }
+
+if ( $ARGV[0] =~ /^-/ ){
+   ($arg = $ARGV[0]) =~ s/^-//;
+   shift;
+   $Files = "@ARGV";
+   if ($arg =~ /x/){
+      $arg = $arg . " $Files | sort +4n -5 ";
+   } else {
+      $arg = $arg . " $Files";
+   }
+} else {
+   $Files = "@ARGV";
+   $arg = " $Files";
+}
+
+$total=0;
+
+open(INPUT, "/bin/ls -l$arg |") || die;
+
+FILE: while(<INPUT>){
+   next FILE if $_ =~ /^total/;
+   chop($_);
+   ++$Count;
+   @Line = split(/\s+/, $_, 9);
+   $total+=$Line[4];
+   $Comma = &numerals($Line[4]);
+  
+   $Uid  = length($Line[2]) if length($Line[2]) > $Uid;
+   $Gid  = length($Line[3]) if length($Line[3]) > $Gid;
+   $Size = length($Comma)   if length($Comma)   > $Size;
+   $Name = length($Line[8]) if length($Line[8]) > $Name;
+  
+   $Key="$Line[0]|$Line[2]|$Line[3]|$Comma|$Line[5]|$Line[6]|$Line[7]|$Line[8]";
+  
+   $Buffer{$Count} = $Key;
+}
+
+close(INPUT);
+
+select(STDOUT); $| = 1;
+
+foreach $KEY (sort numerically keys %Buffer){
+   @Line = split(/\|/, $Buffer{$KEY});
+   $name = pop(@Line);
+   printf("%10s %${Uid}s %${Gid}s %${Size}s %3s %2s %5s ", @Line);
+   print "$name\n";
+}
+
+$Comma = &numerals($total);
+
+print "total: $Comma\n";
+

@@ -1,0 +1,20 @@
+#!/bin/bash
+
+PARM=$1
+
+
+dcli -l oracle -g /Users/Randy/dbs_group ps -ef | grep pmon | grep -v cellos | grep -v grep | awk {' print $1 " " $9 '} | grep -v ASM | grep -v DBFS |\
+while read LINE; do
+  if [ -n "`echo $LINE | grep 1$`" ]; then
+    HOST=`echo "$LINE" | awk -F ':' {' print $1 '}`
+    INST=`echo "$LINE" | awk -F ':' {' print $2 '} | awk -F '_' {' print $3 '}`
+
+  fi
+
+  if [ -n "`echo $INST | grep -v ^dbm`" ]; then
+    echo ssh $HOST /Users/Randy/dba/bin/config_backup -s $INST
+  fi
+
+  unset HOST
+  unset INST
+done

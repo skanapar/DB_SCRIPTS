@@ -1,0 +1,3 @@
+variable jobno number;
+exec dbms_job.submit(:jobno, 'dw_partition_util.create_partitions(''FINANCIALS'',sysdate+5);', sysdate, 'trunc(sysdate)+1+(1410/1440)');
+exec sys.DBMS_IJOB.CHANGE_ENV (job => :jobno, luser => 'ADMIN', cuser => 'ADMIN', puser => 'ADMIN', nlsenv => 'NLS_LANGUAGE=''AMERICAN'' NLS_TERRITORY=''AMERICA'' NLS_CURRENCY=''$'' NLS_ISO_CURRENCY=''AMERICA'' NLS_NUMERIC_CHARACTERS=''.,'' NLS_DATE_FORMAT=''DD-MON-RR'' NLS_DATE_LANGUAGE=''AMERICAN'' NLS_SORT=''BINARY'''); 

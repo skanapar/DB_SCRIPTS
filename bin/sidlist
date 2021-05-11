@@ -1,0 +1,17 @@
+#!/bin/ksh
+
+ORATAB=/etc/oratab
+DEFAULT_IFS=$IFS
+NEWLINE="
+"
+
+SID_LIST=`grep -v "^#" $ORATAB | grep -v "^$" | grep -v "^\*" | awk -F: '{print $1}' | sort`
+   
+if [ "`echo "$SID_LIST" | wc -w`" -gt 1 ]; then
+   echo "   Available Oracle Environments:"
+   IFS="$NEWLINE"
+   for SID in $SID_LIST; do
+      echo "     - $SID"
+   done
+fi
+IFS=DEFAULT_IFS

@@ -1,0 +1,2 @@
+select end_time, wait_class#,        (time_waited_fg)/(intsize_csec/100),        (time_waited)/(intsize_csec/100), 0 from v$waitclassmetric union all select fg.end_time, -1, fg.value, bg.value, dbtime.value from v$sysmetric fg, v$sysmetric bg, v$sysmetric dbtime where bg.metric_name = 'Background CPU Usage Per Sec' and bg.group_id = 2 and fg.metric_name = 'CPU Usage Per Sec' and fg.group_id = 2 and dbtime.metric_name = 'Average Active Sessions' and dbtime.group_id = 2 and bg.end_time = fg.end_time and fg.end_time = dbtime.end_time order by end_time,wait_class#
+/

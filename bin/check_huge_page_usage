@@ -1,0 +1,3 @@
+#!/bin/bash
+
+grep Huge $_ALERT_LOG_ | tail -3

@@ -1,0 +1,101 @@
+#!/bin/env python
+
+import re
+
+day             = r'Sun|Mon|Tue|Wed|Thu|Fri|Sat'
+month           = r'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec'
+                   
+timestamp       = r'^zzz \*\*\*(' + day + ') +(' + month + ') +([0-9]|[0-9][0-9]) +([0-9][0-9]:[0-9][0-9]:[0-9][0-9]) +(\S+) +(\d+)\s*'
+                                      
+header          = r'(^\S+) +(\S+) +(v[0-9].[0-9].[0-9])\s+'
+
+data1           = r'^\s*(avg-cpu:) +(%user) +(%nice) +(%system) +(%iowait) +(%steal) +(%idle)\s*'
+                   
+data2           = r'^\s*(\d+\.\d+) +(\d+\.\d+) +(\d+\.\d+) +(\d+\.\d+) +(\d+\.\d+) +(\d+\.\d+)\s*'
+
+data3           = r' *(Device:) +(rrqm\/s) +(wrqm\/)s +(r\/s) +(w\/s) +(rkB\/s) +(wkB\/s) +(avgrq-sz) +(avgqu-sz) +(await) +(r_await) +(w_await) +(svctm) +(\%util)\s*'
+
+data4           = r'((?:\S+ +\d+\.\d+ +\d+\.\d+ +\d+\.\d+ +\d+\.\d+ +\d+\.\d+ +\d+\.\d+ +\d+\.\d+ +\d+\.\d+ +\d+\.\d+ +\d+\.\d+ +\d+\.\d+ +\d+\.\d+ +\d+\.\d+\s*)+)'
+
+header_pattern  = re.compile(header, re.MULTILINE)
+ts_pattern      = re.compile(timestamp, re.MULTILINE)
+
+#data_pattern    = re.compile(timestamp + data1 + data2 + data3 + data4, re.MULTILINE)
+data_pattern    = re.compile(timestamp + data1 + data2 + data3 + data4, re.MULTILINE)
+
+iostat          = """Linux OSWbb v7.3.3
+zzz ***Sat Dec 8 21:00:29 CST 2018
+avg-cpu:  %user   %nice %system %iowait  %steal   %idle
+           9.55    0.00   20.22    5.18    0.00   65.04
+
+Device:         rrqm/s   wrqm/s     r/s     w/s    rkB/s    wkB/s avgrq-sz avgqu-sz   await r_await w_await  svctm  %util
+sdb               0.00     0.00   34.00    5.00   956.00    20.00    50.05     0.03    0.67    0.53    1.60   0.51   2.00
+sdf               0.00     0.00  167.00    0.00  1328.50     0.00    15.91     0.09    0.56    0.56    0.00   0.56   9.30
+sdc               0.00     1.00    0.00   17.00     0.00   294.00    34.59     0.02    1.00    0.00    1.00   1.00   1.70
+sdd               0.00     0.00    2.00    0.00     1.00     0.00     1.00     0.00    0.50    0.50    0.00   0.50   0.10
+sde               0.00     0.00  295.00    1.00  2360.00    16.00    16.05     0.17    0.57    0.57    0.00   0.57  16.90
+sdg               0.00     0.00  149.00    3.00  1184.50    32.50    16.01     0.09    0.59    0.58    0.67   0.58   8.80
+sdi               0.00     0.00    2.00    1.00     1.00     0.50     1.00     0.00    1.00    0.50    2.00   1.00   0.30
+sdj               0.00     0.00   29.00   22.00   448.50    89.50    21.10     0.02    0.37    0.34    0.41   0.37   1.90
+Linux OSWbb v7.3.3
+zzz ***Sat Dec 8 21:00:29 CST 2018
+avg-cpu:  %user   %nice %system %iowait  %steal   %idle
+           9.55    0.00   20.22    5.18    0.00   65.04
+"""
+
+"""Linux OSWbb v7.3.3                                                                                                      #  <------- rex_fheader 
+zzz ***Sat Dec 8 21:00:29 CST 2018                                                                                         #  <---- rex_timestamp  
+avg-cpu:  %user   %nice %system %iowait  %steal   %idle                                                                    #  <---- rex_data1      
+           9.55    0.00   20.22    5.18    0.00   65.04                                                                    #  <---- rex_data2      
+                                                                                                                           #  <---- ???            
+Device:         rrqm/s   wrqm/s     r/s     w/s    rkB/s    wkB/s avgrq-sz avgqu-sz   await r_await w_await  svctm  %util  #  <---- rex_data3      
+sdb               0.00     0.00   34.00    5.00   956.00    20.00    50.05     0.03    0.67    0.53    1.60   0.51   2.00  #  <---- rex_data4      
+sdf               0.00     0.00  167.00    0.00  1328.50     0.00    15.91     0.09    0.56    0.56    0.00   0.56   9.30  #  <---- rex_data4      
+sdc               0.00     1.00    0.00   17.00     0.00   294.00    34.59     0.02    1.00    0.00    1.00   1.00   1.70  #                       
+"""
+
+print("Running...")
+
+print('\n\n--- Sec 1 ---------------------')
+finditer = header_pattern.finditer(iostat)
+
+matches = []
+for m in finditer:
+  matches.append(m)
+  
+for m in matches:
+  print('     Span: %s' % repr(m.span()))
+  print('   Groups: %s' % repr(m.groups()))
+  print('      Pos: %s' % m.pos)
+  print('       Re: %s' % m.re)
+  print('---')
+
+print('\n\n--- Sec 2 ---------------------')
+finditer = ts_pattern.finditer(iostat)
+
+matches = []
+for m in finditer:
+  matches.append(m)
+  
+for m in matches:
+  print('     Span: %s' % repr(m.span()))
+  print('   Groups: %s' % repr(m.groups()))
+  print('      Pos: %s' % m.pos)
+  print('       Re: %s' % m.re)
+  print('---')
+
+print('\n\n--- Sec 3 ---------------------')
+finditer = data_pattern.finditer(iostat)
+
+matches = []
+for m in finditer:
+  matches.append(m)
+  
+for m in matches:
+  print('     Span: %s' % repr(m.span()))
+  print('   Groups: %s' % repr(m.groups()))
+  print('      Pos: %s' % m.pos)
+  print('       Re: %s' % m.re)
+  print('---')
+
+print("Done.")

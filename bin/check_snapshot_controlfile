@@ -1,0 +1,25 @@
+#!/bin/bash
+
+# Check the new snapshot controlfile dest
+ps -ef | grep pmon | grep -v grep | grep -v perl | grep -v ASM |\
+while read PMON; do
+  INST=`echo "$PMON" | awk {' print $8 '} | cut -f3 -d_`
+
+  MAIN_ENV=~/.env/main.env
+  if [ -r $MAIN_ENV ]; then
+     . $MAIN_ENV $INST
+  else
+     echo 'Could not open $MAIN_ENV for read.'
+  fi
+
+  echo $_DB_UNIQUE_NAME_
+  UC_DB_UNIQUE_NAME=`echo $_DB_UNIQUE_NAME_ | tr '[:lower:]' '[:upper:]'`
+
+  rman target / <<-EOF>/tmp/x
+  show all;
+EOF
+grep 'CONFIGURE SNAPSHOT CONTROLFI' /tmp/x
+echo
+done
+
+

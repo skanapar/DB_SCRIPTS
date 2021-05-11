@@ -1,0 +1,11 @@
+#!/bin/bash
+
+while :; do
+  sqlplus "/ as sysdba" <<-EOF &
+  spool snap.txt append
+  @snapper.sql ash=sql_id+sid+event+wait_class+module+service,stats 5 1 $1
+  exit
+  EOF
+  sleep 10
+  echo
+done

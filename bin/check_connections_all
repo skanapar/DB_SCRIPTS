@@ -1,0 +1,27 @@
+#!/bin/bash
+
+ps -ef | grep pmon | grep -v grep | grep -v perl | grep -v ASM | grep -v DBFS |\
+while read PMON; do
+   INST=`echo $PMON | awk {' print $8 '} | cut -f3 -d_`
+  echo $INST
+
+  MAIN_ENV=~/.env/main.env
+  if [ -r $MAIN_ENV ]; then
+     . $MAIN_ENV $INST
+  else
+     echo 'Could not open $MAIN_ENV for read.'
+  fi
+
+  sqlplus -s /nolog <<-EOF
+  connect / as sysdba
+  set head off
+  SELECT instance_num, username, status, count(*) 
+  FROM gv\$session 
+ WHERE username is not null 
+   AND username not in ('SYS','DBSNMP','SYSTEM')
+  group by instance_num, username, status;
+
+EOF
+
+done
+

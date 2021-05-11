@@ -1,0 +1,81 @@
+#!/bin/bash
+
+export SID=$1
+export user=$2
+export passwd=$3
+export sessions=$4
+
+create_tables() {
+  sqlplus -s /nolog<<EOF
+  connect ${user}/${passwd}@${SID}
+  drop table mytab7;
+  create table mytab7 nologging as select * from dba_objects;
+  insert /*+ APPEND */ into mytab7 (select * from mytab7);
+  commit;
+  insert /*+ APPEND */ into mytab7 (select * from mytab7);
+  commit;
+  insert /*+ APPEND */ into mytab7 (select * from mytab7);
+  commit;
+  insert /*+ APPEND */ into mytab7 (select * from mytab7);
+  commit;
+  insert /*+ APPEND */ into mytab7 (select * from mytab7);
+  commit;
+  insert /*+ APPEND */ into mytab7 (select * from mytab7);
+  commit;
+  insert /*+ APPEND */ into mytab7 (select * from mytab7);
+  commit;
+  insert /*+ APPEND */ into mytab7 (select * from mytab7);
+  commit;
+  insert /*+ APPEND */ into mytab7 (select * from mytab7);
+  commit;
+  insert /*+ APPEND */ into mytab7 (select * from mytab7);
+  commit;
+  insert /*+ APPEND */ into mytab7 (select * from mytab7);
+  commit;
+  insert /*+ APPEND */ into mytab7 (select * from mytab7);
+  commit;
+
+  drop table mytab8;
+  create table mytab8 nologging as select * from mytab7;
+
+  create index ix_obj_id1 on mytab7(object_id) nologging;
+  create index ix_obj_nm1 on mytab7(object_name) nologging;
+  create index ix_obj_ow1 on mytab7(owner) nologging;
+  create index ix_obj_tp1 on mytab7(object_type) nologging;
+
+  create index ix_obj_id2 on mytab8(object_id) nologging;
+  create index ix_obj_nm2 on mytab8(object_name) nologging;
+  create index ix_obj_ow2 on mytab8(owner) nologging;
+  create index ix_obj_tp2 on mytab8(object_type) nologging;
+  EXIT
+EOF
+}
+
+burn_io3() {
+  sqlplus -s /nolog<<EOF
+  connect ${user}/${passwd}@${SID}
+
+  select *
+    from mytab7 a, 
+         mytab8 b
+   where a.object_id    = b.object_id
+     and a.owner        = b.owner
+     and a.object_type  = b.object_type
+     and a.object_name  = b.object_name;
+
+  EXIT
+EOF
+}
+
+JOBS=0
+#create_tables
+while :; do
+   burn_io3 > /dev/null &
+   #burn_io3  &
+   JOBS=`jobs | wc -l`
+   while [ "$JOBS" -ge "$sessions" ]; do
+      sleep 5
+      JOBS=`jobs | wc -l`
+   done
+done
+

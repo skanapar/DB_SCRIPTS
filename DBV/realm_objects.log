@@ -1,0 +1,240 @@
+SQL> /
+
+REALM_NAME                                         OWNER                OBJECT_NAME                                                                                                                     
+-------------------------------------------------- -------------------- ----------------------------------------                                                                                        
+Database Vault Account Management                  %                    CONNECT                                                                                                                         
+Database Vault Account Management                  %                    DV_ACCTMGR                                                                                                                      
+Oracle Database Vault                              %                    DV_ADMIN                                                                                                                        
+Oracle Database Vault                              %                    DV_AUDIT_CLEANUP                                                                                                                
+Oracle Database Vault                              %                    DV_DATAPUMP_NETWORK_LINK                                                                                                        
+Oracle Database Vault                              %                    DV_GOLDENGATE_ADMIN                                                                                                             
+Oracle Database Vault                              %                    DV_GOLDENGATE_REDO_ACCESS                                                                                                       
+Oracle Database Vault                              %                    DV_MONITOR                                                                                                                      
+Oracle Database Vault                              %                    DV_OWNER                                                                                                                        
+Oracle Database Vault                              %                    DV_PATCH_ADMIN                                                                                                                  
+Oracle Database Vault                              %                    DV_POLICY_OWNER                                                                                                                 
+
+REALM_NAME                                         OWNER                OBJECT_NAME                                                                                                                     
+-------------------------------------------------- -------------------- ----------------------------------------                                                                                        
+Oracle Database Vault                              %                    DV_PUBLIC                                                                                                                       
+Oracle Database Vault                              %                    DV_SECANALYST                                                                                                                   
+Oracle Database Vault                              %                    DV_STREAMS_ADMIN                                                                                                                
+Oracle Database Vault                              %                    DV_XSTREAM_ADMIN                                                                                                                
+Oracle Database Vault                              %                    LBAC_DBA                                                                                                                        
+Oracle Database Vault                              DVF                  %                                                                                                                               
+Oracle Database Vault                              DVSYS                %                                                                                                                               
+Oracle Database Vault                              LBACSYS              %                                                                                                                               
+Oracle Database Vault                              PUBLIC               CDB_DV_STATUS                                                                                                                   
+Oracle Database Vault                              PUBLIC               CONFIGURE_DV                                                                                                                    
+Oracle Database Vault                              PUBLIC               DBA_DV_AUTH                                                                                                                     
+
+REALM_NAME                                         OWNER                OBJECT_NAME                                                                                                                     
+-------------------------------------------------- -------------------- ----------------------------------------                                                                                        
+Oracle Database Vault                              PUBLIC               DBA_DV_CODE                                                                                                                     
+Oracle Database Vault                              PUBLIC               DBA_DV_COMMAND_RULE                                                                                                             
+Oracle Database Vault                              PUBLIC               DBA_DV_COMMAND_RULE_ID                                                                                                          
+Oracle Database Vault                              PUBLIC               DBA_DV_DATAPUMP_AUTH                                                                                                            
+Oracle Database Vault                              PUBLIC               DBA_DV_DBCAPTURE_AUTH                                                                                                           
+Oracle Database Vault                              PUBLIC               DBA_DV_DBREPLAY_AUTH                                                                                                            
+Oracle Database Vault                              PUBLIC               DBA_DV_DDL_AUTH                                                                                                                 
+Oracle Database Vault                              PUBLIC               DBA_DV_DEBUG_CONNECT_AUTH                                                                                                       
+Oracle Database Vault                              PUBLIC               DBA_DV_DIAGNOSTIC_AUTH                                                                                                          
+Oracle Database Vault                              PUBLIC               DBA_DV_DICTIONARY_ACCTS                                                                                                         
+Oracle Database Vault                              PUBLIC               DBA_DV_FACTOR                                                                                                                   
+
+REALM_NAME                                         OWNER                OBJECT_NAME                                                                                                                     
+-------------------------------------------------- -------------------- ----------------------------------------                                                                                        
+Oracle Database Vault                              PUBLIC               DBA_DV_FACTOR_LINK                                                                                                              
+Oracle Database Vault                              PUBLIC               DBA_DV_FACTOR_TYPE                                                                                                              
+Oracle Database Vault                              PUBLIC               DBA_DV_IDENTITY                                                                                                                 
+Oracle Database Vault                              PUBLIC               DBA_DV_IDENTITY_MAP                                                                                                             
+Oracle Database Vault                              PUBLIC               DBA_DV_JOB_AUTH                                                                                                                 
+Oracle Database Vault                              PUBLIC               DBA_DV_MAC_POLICY                                                                                                               
+Oracle Database Vault                              PUBLIC               DBA_DV_MAC_POLICY_FACTOR                                                                                                        
+Oracle Database Vault                              PUBLIC               DBA_DV_MAINTENANCE_AUTH                                                                                                         
+Oracle Database Vault                              PUBLIC               DBA_DV_ORADEBUG                                                                                                                 
+Oracle Database Vault                              PUBLIC               DBA_DV_PATCH_ADMIN_AUDIT                                                                                                        
+Oracle Database Vault                              PUBLIC               DBA_DV_POLICY                                                                                                                   
+
+REALM_NAME                                         OWNER                OBJECT_NAME                                                                                                                     
+-------------------------------------------------- -------------------- ----------------------------------------                                                                                        
+Oracle Database Vault                              PUBLIC               DBA_DV_POLICY_LABEL                                                                                                             
+Oracle Database Vault                              PUBLIC               DBA_DV_POLICY_OBJECT                                                                                                            
+Oracle Database Vault                              PUBLIC               DBA_DV_POLICY_OWNER                                                                                                             
+Oracle Database Vault                              PUBLIC               DBA_DV_PREPROCESSOR_AUTH                                                                                                        
+Oracle Database Vault                              PUBLIC               DBA_DV_PROXY_AUTH                                                                                                               
+Oracle Database Vault                              PUBLIC               DBA_DV_PUB_PRIVS                                                                                                                
+Oracle Database Vault                              PUBLIC               DBA_DV_REALM                                                                                                                    
+Oracle Database Vault                              PUBLIC               DBA_DV_REALM_AUTH                                                                                                               
+Oracle Database Vault                              PUBLIC               DBA_DV_REALM_OBJECT                                                                                                             
+Oracle Database Vault                              PUBLIC               DBA_DV_ROLE                                                                                                                     
+Oracle Database Vault                              PUBLIC               DBA_DV_RULE                                                                                                                     
+
+REALM_NAME                                         OWNER                OBJECT_NAME                                                                                                                     
+-------------------------------------------------- -------------------- ----------------------------------------                                                                                        
+Oracle Database Vault                              PUBLIC               DBA_DV_RULE_SET                                                                                                                 
+Oracle Database Vault                              PUBLIC               DBA_DV_RULE_SET_RULE                                                                                                            
+Oracle Database Vault                              PUBLIC               DBA_DV_SIMULATION_LOG                                                                                                           
+Oracle Database Vault                              PUBLIC               DBA_DV_STATUS                                                                                                                   
+Oracle Database Vault                              PUBLIC               DBA_DV_TTS_AUTH                                                                                                                 
+Oracle Database Vault                              PUBLIC               DBA_DV_USER_PRIVS                                                                                                               
+Oracle Database Vault                              PUBLIC               DBA_DV_USER_PRIVS_ALL                                                                                                           
+Oracle Database Vault                              PUBLIC               DBMS_MACADM                                                                                                                     
+Oracle Database Vault                              PUBLIC               DBMS_MACOLS_SESSION                                                                                                             
+Oracle Database Vault                              PUBLIC               DBMS_MACSEC_ROLES                                                                                                               
+Oracle Database Vault                              PUBLIC               DBMS_MACUTL                                                                                                                     
+
+REALM_NAME                                         OWNER                OBJECT_NAME                                                                                                                     
+-------------------------------------------------- -------------------- ----------------------------------------                                                                                        
+Oracle Database Vault                              PUBLIC               DUAL                                                                                                                            
+Oracle Database Vault                              PUBLIC               DV_ADMIN_GRANTEES                                                                                                               
+Oracle Database Vault                              PUBLIC               DV_AUDIT_CLEANUP_GRANTEES                                                                                                       
+Oracle Database Vault                              PUBLIC               DV_DATABASE_NAME                                                                                                                
+Oracle Database Vault                              PUBLIC               DV_DICT_OBJ_NAME                                                                                                                
+Oracle Database Vault                              PUBLIC               DV_DICT_OBJ_OWNER                                                                                                               
+Oracle Database Vault                              PUBLIC               DV_DICT_OBJ_TYPE                                                                                                                
+Oracle Database Vault                              PUBLIC               DV_INSTANCE_NUM                                                                                                                 
+Oracle Database Vault                              PUBLIC               DV_JOB_INVOKER                                                                                                                  
+Oracle Database Vault                              PUBLIC               DV_JOB_OWNER                                                                                                                    
+Oracle Database Vault                              PUBLIC               DV_LOGIN_USER                                                                                                                   
+
+REALM_NAME                                         OWNER                OBJECT_NAME                                                                                                                     
+-------------------------------------------------- -------------------- ----------------------------------------                                                                                        
+Oracle Database Vault                              PUBLIC               DV_MONITOR_GRANTEES                                                                                                             
+Oracle Database Vault                              PUBLIC               DV_OBJ_NAME                                                                                                                     
+Oracle Database Vault                              PUBLIC               DV_OWNER_GRANTEES                                                                                                               
+Oracle Database Vault                              PUBLIC               DV_SECANALYST_GRANTEES                                                                                                          
+Oracle Database Vault                              PUBLIC               DV_SQL_TEXT                                                                                                                     
+Oracle Database Vault                              PUBLIC               DV_SYSEVENT                                                                                                                     
+Oracle Database Vault                              PUBLIC               GET_FACTOR                                                                                                                      
+Oracle Database Vault                              PUBLIC               GET_FACTOR_LABEL                                                                                                                
+Oracle Database Vault                              PUBLIC               GET_TRUST_LEVEL                                                                                                                 
+Oracle Database Vault                              PUBLIC               GET_TRUST_LEVEL_FOR_IDENTITY                                                                                                    
+Oracle Database Vault                              PUBLIC               IS_SECURE_APPLICATION_ROLE                                                                                                      
+
+REALM_NAME                                         OWNER                OBJECT_NAME                                                                                                                     
+-------------------------------------------------- -------------------- ----------------------------------------                                                                                        
+Oracle Database Vault                              PUBLIC               PLSQL_STACK_ARRAY                                                                                                               
+Oracle Database Vault                              PUBLIC               ROLE_IS_ENABLED                                                                                                                 
+Oracle Database Vault                              PUBLIC               SET_FACTOR                                                                                                                      
+Oracle Database Vault                              PUBLIC               SIMULATION_IDS                                                                                                                  
+Oracle Database Vault                              SYS                  DBMS_RLS                                                                                                                        
+Oracle Default Component Protection Realm          OUTLN                %                                                                                                                               
+Oracle Default Component Protection Realm          SYSTEM               %                                                                                                                               
+Oracle Default Schema Protection Realm             %                    AUTHENTICATEDUSER                                                                                                               
+Oracle Default Schema Protection Realm             %                    CTXAPP                                                                                                                          
+Oracle Default Schema Protection Realm             %                    EJBCLIENT                                                                                                                       
+Oracle Default Schema Protection Realm             %                    GDS_CATALOG_SELECT                                                                                                              
+
+REALM_NAME                                         OWNER                OBJECT_NAME                                                                                                                     
+-------------------------------------------------- -------------------- ----------------------------------------                                                                                        
+Oracle Default Schema Protection Realm             %                    GGSYS_ROLE                                                                                                                      
+Oracle Default Schema Protection Realm             %                    GSMADMIN_ROLE                                                                                                                   
+Oracle Default Schema Protection Realm             %                    GSMUSER_ROLE                                                                                                                    
+Oracle Default Schema Protection Realm             %                    GSM_POOLADMIN_ROLE                                                                                                              
+Oracle Default Schema Protection Realm             %                    JMXSERVER                                                                                                                       
+Oracle Default Schema Protection Realm             %                    OLAP_DBA                                                                                                                        
+Oracle Default Schema Protection Realm             %                    OLAP_USER                                                                                                                       
+Oracle Default Schema Protection Realm             %                    OLAP_XS_ADMIN                                                                                                                   
+Oracle Default Schema Protection Realm             %                    ORDADMIN                                                                                                                        
+Oracle Default Schema Protection Realm             %                    SODA_APP                                                                                                                        
+Oracle Default Schema Protection Realm             %                    SYSUMF_ROLE                                                                                                                     
+
+REALM_NAME                                         OWNER                OBJECT_NAME                                                                                                                     
+-------------------------------------------------- -------------------- ----------------------------------------                                                                                        
+Oracle Default Schema Protection Realm             %                    WM_ADMIN_ROLE                                                                                                                   
+Oracle Default Schema Protection Realm             %                    XDBADMIN                                                                                                                        
+Oracle Default Schema Protection Realm             %                    XDB_SET_INVOKER                                                                                                                 
+Oracle Default Schema Protection Realm             %                    XDB_WEBSERVICES                                                                                                                 
+Oracle Default Schema Protection Realm             %                    XDB_WEBSERVICES_OVER_HTTP                                                                                                       
+Oracle Default Schema Protection Realm             %                    XDB_WEBSERVICES_WITH_PUBLIC                                                                                                     
+Oracle Default Schema Protection Realm             CTXSYS               %                                                                                                                               
+Oracle Default Schema Protection Realm             MDDATA               %                                                                                                                               
+Oracle Default Schema Protection Realm             MDSYS                %                                                                                                                               
+Oracle Enterprise Manager                          %                    EM_EXPRESS_ALL                                                                                                                  
+Oracle Enterprise Manager                          %                    EM_EXPRESS_BASIC                                                                                                                
+
+REALM_NAME                                         OWNER                OBJECT_NAME                                                                                                                     
+-------------------------------------------------- -------------------- ----------------------------------------                                                                                        
+Oracle Enterprise Manager                          %                    OEM_ADVISOR                                                                                                                     
+Oracle Enterprise Manager                          %                    OEM_MONITOR                                                                                                                     
+Oracle Enterprise Manager                          DBSNMP               %                                                                                                                               
+Oracle System Privilege and Role Management Realm  %                    ADM_PARALLEL_EXECUTE_TASK                                                                                                       
+Oracle System Privilege and Role Management Realm  %                    APPLICATION_TRACE_VIEWER                                                                                                        
+Oracle System Privilege and Role Management Realm  %                    AQ_ADMINISTRATOR_ROLE                                                                                                           
+Oracle System Privilege and Role Management Realm  %                    AQ_USER_ROLE                                                                                                                    
+Oracle System Privilege and Role Management Realm  %                    AUDIT_ADMIN                                                                                                                     
+Oracle System Privilege and Role Management Realm  %                    AUDIT_VIEWER                                                                                                                    
+Oracle System Privilege and Role Management Realm  %                    CAPTURE_ADMIN                                                                                                                   
+Oracle System Privilege and Role Management Realm  %                    CDB_DBA                                                                                                                         
+
+REALM_NAME                                         OWNER                OBJECT_NAME                                                                                                                     
+-------------------------------------------------- -------------------- ----------------------------------------                                                                                        
+Oracle System Privilege and Role Management Realm  %                    CONNECT                                                                                                                         
+Oracle System Privilege and Role Management Realm  %                    DATAPATCH_ROLE                                                                                                                  
+Oracle System Privilege and Role Management Realm  %                    DATAPUMP_EXP_FULL_DATABASE                                                                                                      
+Oracle System Privilege and Role Management Realm  %                    DATAPUMP_IMP_FULL_DATABASE                                                                                                      
+Oracle System Privilege and Role Management Realm  %                    DBA                                                                                                                             
+Oracle System Privilege and Role Management Realm  %                    DBFS_ROLE                                                                                                                       
+Oracle System Privilege and Role Management Realm  %                    DBJAVASCRIPT                                                                                                                    
+Oracle System Privilege and Role Management Realm  %                    DBMS_AUTH                                                                                                                       
+Oracle System Privilege and Role Management Realm  %                    DBMS_MDX_INTERNAL                                                                                                               
+Oracle System Privilege and Role Management Realm  %                    DBMS_PASSWD                                                                                                                     
+Oracle System Privilege and Role Management Realm  %                    DV_REALM_OWNER                                                                                                                  
+
+REALM_NAME                                         OWNER                OBJECT_NAME                                                                                                                     
+-------------------------------------------------- -------------------- ----------------------------------------                                                                                        
+Oracle System Privilege and Role Management Realm  %                    DV_REALM_RESOURCE                                                                                                               
+Oracle System Privilege and Role Management Realm  %                    EXECUTE_CATALOG_ROLE                                                                                                            
+Oracle System Privilege and Role Management Realm  %                    EXP_FULL_DATABASE                                                                                                               
+Oracle System Privilege and Role Management Realm  %                    EXTERNAL_DBMS_AUTH                                                                                                              
+Oracle System Privilege and Role Management Realm  %                    GATHER_SYSTEM_STATISTICS                                                                                                        
+Oracle System Privilege and Role Management Realm  %                    GLOBAL_AQ_USER_ROLE                                                                                                             
+Oracle System Privilege and Role Management Realm  %                    HS_ADMIN_EXECUTE_ROLE                                                                                                           
+Oracle System Privilege and Role Management Realm  %                    HS_ADMIN_ROLE                                                                                                                   
+Oracle System Privilege and Role Management Realm  %                    HS_ADMIN_SELECT_ROLE                                                                                                            
+Oracle System Privilege and Role Management Realm  %                    IMP_FULL_DATABASE                                                                                                               
+Oracle System Privilege and Role Management Realm  %                    JAVADEBUGPRIV                                                                                                                   
+
+REALM_NAME                                         OWNER                OBJECT_NAME                                                                                                                     
+-------------------------------------------------- -------------------- ----------------------------------------                                                                                        
+Oracle System Privilege and Role Management Realm  %                    JAVAIDPRIV                                                                                                                      
+Oracle System Privilege and Role Management Realm  %                    JAVASYSPRIV                                                                                                                     
+Oracle System Privilege and Role Management Realm  %                    JAVAUSERPRIV                                                                                                                    
+Oracle System Privilege and Role Management Realm  %                    JAVA_ADMIN                                                                                                                      
+Oracle System Privilege and Role Management Realm  %                    LOGSTDBY_ADMINISTRATOR                                                                                                          
+Oracle System Privilege and Role Management Realm  %                    MIDTIER_AUTH                                                                                                                    
+Oracle System Privilege and Role Management Realm  %                    OPTIMIZER_PROCESSING_RATE                                                                                                       
+Oracle System Privilege and Role Management Realm  %                    PDB_DBA                                                                                                                         
+Oracle System Privilege and Role Management Realm  %                    PROVISIONER                                                                                                                     
+Oracle System Privilege and Role Management Realm  %                    RDFCTX_ADMIN                                                                                                                    
+Oracle System Privilege and Role Management Realm  %                    RECOVERY_CATALOG_OWNER                                                                                                          
+
+REALM_NAME                                         OWNER                OBJECT_NAME                                                                                                                     
+-------------------------------------------------- -------------------- ----------------------------------------                                                                                        
+Oracle System Privilege and Role Management Realm  %                    RECOVERY_CATALOG_OWNER_VPD                                                                                                      
+Oracle System Privilege and Role Management Realm  %                    RECOVERY_CATALOG_USER                                                                                                           
+Oracle System Privilege and Role Management Realm  %                    RESOURCE                                                                                                                        
+Oracle System Privilege and Role Management Realm  %                    SCHEDULER_ADMIN                                                                                                                 
+Oracle System Privilege and Role Management Realm  %                    SELECT_CATALOG_ROLE                                                                                                             
+Oracle System Privilege and Role Management Realm  %                    XSAUTHENTICATED                                                                                                                 
+Oracle System Privilege and Role Management Realm  %                    XSBYPASS                                                                                                                        
+Oracle System Privilege and Role Management Realm  %                    XSCACHEADMIN                                                                                                                    
+Oracle System Privilege and Role Management Realm  %                    XSDISPATCHER                                                                                                                    
+Oracle System Privilege and Role Management Realm  %                    XSNAMESPACEADMIN                                                                                                                
+Oracle System Privilege and Role Management Realm  %                    XSPROVISIONER                                                                                                                   
+
+REALM_NAME                                         OWNER                OBJECT_NAME                                                                                                                     
+-------------------------------------------------- -------------------- ----------------------------------------                                                                                        
+Oracle System Privilege and Role Management Realm  %                    XSSESSIONADMIN                                                                                                                  
+Oracle System Privilege and Role Management Realm  %                    XSSWITCH                                                                                                                        
+Oracle System Privilege and Role Management Realm  %                    XS_CACHE_ADMIN                                                                                                                  
+Oracle System Privilege and Role Management Realm  %                    XS_CONNECT                                                                                                                      
+Oracle System Privilege and Role Management Realm  %                    XS_NAMESPACE_ADMIN                                                                                                              
+Oracle System Privilege and Role Management Realm  %                    XS_SESSION_ADMIN                                                                                                                
+Oracle System Privilege and Role Management Realm  LBACSYS              DBA_OLS_STATUS                                                                                                                  
+Oracle System Privilege and Role Management Realm  XS$NULL              %                                                                                                                               
+
+184 rows selected.
+
+SQL> spool off

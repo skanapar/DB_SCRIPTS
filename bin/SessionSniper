@@ -1,0 +1,799 @@
+#!/bin/env python
+
+##################################################################################################
+#  Name:        SessionSniper                                                                    #
+#  Author:      Randy Johnson                                                                    #
+#  Description: This program reports session information for all active sessions in the          #
+#               database whos execution time is greater than $Threshold seconds in duration.     #
+#               If the -k switch is specified then sessions exceeding the threshold will be      #
+#               killed. If the -e option is specified (along with the -f option) then the        #
+#               output file will be emailed to as an attachment.                                 #
+#                                                                                                #
+#  usage: SessionSniper [options]                                                                #
+#                                                                                                #
+#  Example: SessionSniper -d ICPL -s ICPL -u system -t 900 -p 300 -o -v -e -k                    #
+#                                                                                                #
+#  options:                                                                                      #
+#    -h, --help        show this help message and exit                                           #
+#    -d DatabaseName   Database name (defaults to ORACLE_SID)                                    #
+#    -e                Email output file daily                                                   #
+#    -k                Kill sessions                                                             #
+#    -l Loglevel       Log levels 0, 1, 2                                                        #
+#    -o                Create output file                                                        #
+#    -p PollingPeriod  Polling Period (in seconds)                                               #
+#    -s ServiceName    Service name (filter)                                                     #
+#    -t Threshold      Threshold (in seconds)                                                    #
+#    -u AuthUser       Authentication user account                                               #
+#    -v                Verbose output                                                            #
+#    --version         print version info.                                                       #
+#                                                                                                #
+#  Result Codes: 0 indicates unsuccessful completion.                                            #
+#                                                                                                #
+##################################################################################################
+#                                                                                                #
+# MODIFICATION HISTORY:                                                                          #
+#                                                                                                #
+# Chg Date   Chg  By               Change Description                                            #
+# ---------- ---- ---------------- ------------------------------------------------------------  #
+# 04/02/2013 1.0  Randy Johhnson   Initial release.                                              #
+##################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+import                      cx_Oracle
+from datetime               import datetime
+from datetime               import timedelta
+from email                  import Encoders
+from email.MIMEBase         import MIMEBase
+from email.MIMEMultipart    import MIMEMultipart
+from email.MIMENonMultipart import MIMENonMultipart
+from email.MIMEText         import MIMEText
+from email.Utils            import COMMASPACE
+from email.Utils            import formatdate
+from getpass                import getuser
+from optparse               import OptionParser
+from os                     import environ
+from os                     import listdir
+from os                     import path
+from os.path                import basename
+from os.path                import isfile
+from re                     import match
+from re                     import search
+from signal                 import SIGPIPE
+from signal                 import SIG_DFL
+from signal                 import signal
+from socket                 import gethostname
+from string                 import join
+from string                 import strip
+from subprocess             import PIPE
+from subprocess             import Popen
+from subprocess             import STDOUT
+from sys                    import argv
+from sys                    import exc_info
+from sys                    import exit
+from sys                    import stdout
+from time                   import sleep
+
+
+# For handling termination in stdout pipe.
+#  ex. when you run: SessionSniper | head
+#--------------------------------------------
+signal(SIGPIPE, SIG_DFL)
+
+# --------------------------------------
+# ---- Function Definitions ------------
+# --------------------------------------
+
+# Function: GetPassword()
+# Desc    : Retrieve database password from the password file.
+# Args    : db_unique_name, database username
+# Retn    : If success then returns passwprd. If not return
+#           blank.
+# ------------------------------------------------------------
+def GetPassword(Name, User):
+
+  try:
+    PasswdFile = open(PasswdFilename, 'r')
+    pwdContents = PasswdFile.read()
+
+  except:
+    print('\nCannot open password file for read:', PasswdFilename)
+
+  for pwdLine in pwdContents.split('\n'):
+    if (not (match(r'^\s*$', pwdLine))):               # skip blank lines
+      if (not (match(r'^\s#\s*$', pwdLine))):          # skip commented lines
+        if (pwdLine.count(':') == 2):                  # ignore lines that do not contain 2 colon's (:).
+          (pwDbname, pwUser, pwPass) = pwdLine.split(':')
+          #print pwDbname, pwUser, pwPass
+          if ((pwDbname == Name) and ( pwUser.upper() == User.upper()) and (pwPass != '')):
+            return(pwPass)
+  return('')
+# End GetPassword()
+
+# Def : SetOracleEnv()
+# Desc: Setup your environemnt, eg. ORACLE_HOME, ORACLE_SID. (Parses oratab
+#       file).
+# Args: Sid = The ORACLE_SID of the home you want to configure for
+# Retn: OracleHome = $ORACLE_HOME
+#---------------------------------------------------------------------------
+def SetOracleEnv(Sid, Oratab):
+  OracleSid = ''
+  OracleHome = ''
+
+  SidCount = len(list(Oratab.keys()))
+
+  if (SidCount > 0):
+    if (Sid in list(Oratab.keys())):
+      OracleSid  = Sid
+    else:
+      OracleSid = list(Oratab.keys())[0]           # Just grab the first ORACLE_SID if none provided.
+
+  if (OracleSid == ''):
+    print('Cannot configure Oracle environment. Try setting your Oracle environment manually.')
+    exit(1)
+  else:
+    OracleHome = Oratab[OracleSid]
+    environ['ORACLE_SID'] = OracleSid
+    environ['ORACLE_HOME'] = OracleHome
+
+    if (environ['LD_LIBRARY_PATH'] != ''):
+      environ['LD_LIBRARY_PATH'] = OracleHome + '/lib' + ':' + environ['LD_LIBRARY_PATH']       # prepend to LD_LIBRARY_PATH
+    else:
+      environ['LD_LIBRARY_PATH'] = OracleHome + '/lib'
+
+  return(OracleSid, OracleHome)
+# End SetOracleEnv()
+
+
+# Def : LoadOratab()
+# Desc: Parses the oratab file and returns a List of lists containing:
+#       SID, ORACLE_HOME, Stop/Start Flag
+# Args: none.
+# Retn: OratabLL
+#---------------------------------------------------------------------------
+def LoadOratab():
+  OracleSid =  ''
+  OracleHome = ''
+  Bootflag   = ''
+  Oratab     = {}
+
+  try:
+    otab = open(OratabFile)
+  except:
+    formatExceptionInfo()
+    print('Cannot open oratab file: ' + OratabFile + ' for read.')
+    exit(1)
+
+  OratabContents = otab.read().split('\n')
+  for line in OratabContents:
+    line = line.strip()
+    pos = line.find('#')
+    if (pos >= 0):                     # Comment character found.
+      if (pos > 0):                    # Comment isn't at the beginning of the line. (there is something to preserve)
+        line = line[0:pos]
+      else:
+        line = ''
+    if (line != ''):
+      Count = line.count(':')
+      if (Count == 2):
+        (OraSid, OraHome, Bootflag) = line.split(':')
+        Oratab[OraSid] = OraHome
+  return(Oratab)
+# End LoadOratab()
+
+# Def  : SendReport()
+# Desc : Creates a multi-part MIME message.
+# Args : fromAddr, toAddr, Subject, Body, FileList, server="localhost"
+# Retn : msg = Message object containing the multi-part MIME email message.
+#---------------------------------------------------------------------------
+def SendReport(AddressList, Report, MsgSizeLimit):
+  hostname       = gethostname()
+  username       = getuser()
+  ReportFilename = 'SessionSniper_Report_' + hostname.split('.')[0] + '_' + DatabaseName + '.xls'
+  Subject        = 'Session Sniper Report for ' + hostname + ' ' + DatabaseName
+  Body           = 'See attached report.'
+
+  msg = MIMEMultipart()
+  msg['From']    = username + '@' + hostname
+  msg['To']      = COMMASPACE.join(AddressList)
+  msg['Date']    = formatdate(localtime=True)
+  msg['Subject'] = Subject
+
+  msg.attach( MIMEText(Body) )
+
+  part = MIMEBase('application', "octet-stream")
+  part.set_payload(Report)
+  Encoders.encode_base64(part)
+  part.add_header('Content-Disposition', 'attachment; filename="%s"' % (ReportFilename))
+  msg.attach(part)
+
+  msgText = msg.as_string()
+  if (len(msgText) >= MsgSizeLimit):
+    msgSize      = splitThousands(len(msgText))
+    MsgSizeLimit = splitThousands(MsgSizeLimit)
+    print('\nMessage size', msgSize, 'is larger than email size limit of', MsgSizeLimit)
+    exit(1)
+
+  if (LogLevel >= 2):
+    proc= Popen(['/usr/sbin/sendmail', '-t', '-v'], stdin=PIPE, stdout=PIPE, stderr=STDOUT, shell=False, universal_newlines=True, close_fds=True)
+    print(msg.as_string())
+  else:
+    proc= Popen(['/usr/sbin/sendmail', '-t'], stdin=PIPE, stdout=PIPE, stderr=STDOUT, shell=False, universal_newlines=True, close_fds=True)
+
+  # Write the contents of the mail message to sendmail's stdin and close.
+  proc.stdin.write(msg.as_string())
+  proc.stdin.close()
+
+  # Catch stdout/stderr output.
+  stdOut = proc.stdout.read()
+
+  # Get the return code from sendmail
+  procRC = proc.poll()
+
+  if (LogLevel >= 2):
+    print('\nstdout & stderr from sendmail session follows...\n')
+    print(stdOut)
+    print('\nEnd sendmail session.\n')
+    print('exiting', Cmd)
+
+  return()
+# End SendReport()
+
+# Def  : GetSessionInfo()
+# Desc : Pulls session information for all 'ACTIVE' sessions in the
+#      : database instance including text of SQL statements.
+# Args : Database name (for tns connect), Username, Password, Exemption list.
+# Retn : SessionListOfDict, SqlTextDict
+#---------------------------------------------------------------------------
+def GetSessionInfo(DatabaseName, AuthUser, AuthPasswd, ExemptUsers):
+  MySid    = '';
+  MySerial = '';
+
+  MySessionQry  = "SELECT SID, SERIAL#"                                                                            + '\n'
+  MySessionQry += "  FROM V$SESSION"                                                                               + '\n'
+  MySessionQry += " WHERE AUDSID = (select nvl(SYS_CONTEXT('USERENV','SESSIONID'), '<none>') sessionid from dual)" + '\n'
+
+ # print MySessionQry
+
+  # This query will retrieve session information along with sql text of executing statement.
+  # One row will be returned for each piece of sql text broken up into 64 byte segments.
+  # -----------------------------------------------------------------------------------------
+  SessionQry  = "SELECT TO_CHAR(SYSDATE,'YYYY-MM-DD HH24:MI:SS') DISCOVERY_DATE,"                                   + '\n'
+  SessionQry += "       S.STATUS,"                                                                                  + '\n'
+  SessionQry += "       S.SERIAL#,"                                                                                 + '\n'
+  SessionQry += "       S.TYPE,"                                                                                    + '\n'
+  SessionQry += "       S.USERNAME,"                                                                                + '\n'
+  SessionQry += "       S.OSUSER,"                                                                                  + '\n'
+  SessionQry += "       S.SERVER,"                                                                                  + '\n'
+  SessionQry += "       S.MACHINE,"                                                                                 + '\n'
+  SessionQry += "       S.MODULE,"                                                                                  + '\n'
+  SessionQry += "       S.SERVICE_NAME,"                                                                            + '\n'
+  SessionQry += "       S.SQL_ID,"                                                                                  + '\n'
+  SessionQry += "       S.PLSQL_ENTRY_OBJECT_ID,"                                                                   + '\n'
+  SessionQry += "       S.PLSQL_ENTRY_SUBPROGRAM_ID,"                                                               + '\n'
+  SessionQry += "       S.CLIENT_INFO,"                                                                             + '\n'
+  SessionQry += "       S.TERMINAL,"                                                                                + '\n'
+  SessionQry += "       S.PROGRAM,"                                                                                 + '\n'
+  SessionQry += "       P.PROGRAM,"                                                                                 + '\n'
+  SessionQry += "       TO_CHAR(S.LOGON_TIME, 'YYYY-MM-DD HH24:MI:SS') LOGON_TIME,"                                 + '\n'
+  SessionQry += "       S.LOCKWAIT,"                                                                                + '\n'
+  SessionQry += "       SI.PHYSICAL_READS,"                                                                         + '\n'
+  SessionQry += "       SI.BLOCK_GETS,"                                                                             + '\n'
+  SessionQry += "       SI.CONSISTENT_GETS,"                                                                        + '\n'
+  SessionQry += "       SI.BLOCK_CHANGES,"                                                                          + '\n'
+  SessionQry += "       SI.CONSISTENT_CHANGES,"                                                                     + '\n'
+  SessionQry += "       S.PROCESS,"                                                                                 + '\n'
+  SessionQry += "       P.SPID,"                                                                                    + '\n'
+  SessionQry += "       P.PID,"                                                                                     + '\n'
+  SessionQry += "       SI.SID,"                                                                                    + '\n'
+  SessionQry += "       S.AUDSID,"                                                                                  + '\n'
+  SessionQry += "       S.SQL_ADDRESS,"                                                                             + '\n'
+  SessionQry += "       S.SQL_HASH_VALUE,"                                                                          + '\n'
+  SessionQry += "       S.ACTION,"                                                                                  + '\n'
+  SessionQry += "       TO_CHAR(SYSDATE - (S.LAST_CALL_ET / (60*60*24)),'YYYY-MM-DD HH24:MI:SS') SQL_START_DATE,"   + '\n'
+  SessionQry += "       S.LAST_CALL_ET SQL_RUN_SECONDS,"                                                            + '\n'
+  SessionQry += "       PX.QCSID,"                                                                                  + '\n'
+  SessionQry += "       PX.QCSERIAL#,"                                                                              + '\n'
+  SessionQry += "       ST.SQL_TEXT"                                                                                + '\n'
+  SessionQry += "  FROM V$SESSION S,"                                                                               + '\n'
+  SessionQry += "       V$PROCESS P,"                                                                               + '\n'
+  SessionQry += "       SYS.V_$SESS_IO SI,"                                                                         + '\n'
+  SessionQry += "       V$PX_SESSION PX,"                                                                           + '\n'
+  SessionQry += "       V$SQLTEXT_WITH_NEWLINES ST"                                                                 + '\n'
+  SessionQry += " WHERE S.PADDR   = P.ADDR(+)"                                                                      + '\n'
+  SessionQry += "   and (S.SID    = PX.SID (+) AND S.SERIAL# = PX.SERIAL# (+))"                                     + '\n'
+  SessionQry += "   and SI.SID(+) = S.SID"                                                                          + '\n'
+
+  # If an exemption list has been initialized then use it. Otherwise
+  # assume exempt user accounts are stored in a table.
+  # ------------------------------------------------------------------
+  if (len(ExemptUsers) > 0):
+    ExemptUsers = "'" + join(ExemptUsers, "','") + "'"
+    SessionQry += "   and (s.USERNAME not in (" + ExemptUsers + "))"                                                + '\n'
+
+  if (ServiceName != ''):
+    SessionQry += "   and S.SERVICE_NAME IN (\'" + ServiceName + "\')"                                              + '\n'
+
+  SessionQry += "   and S.USERNAME IS NOT NULL "                                                                    + '\n'
+  SessionQry += "   and (S.STATUS = 'ACTIVE')"                                                                      + '\n'
+  SessionQry += "   and (S.TYPE != 'BACKGROUND')"                                                                   + '\n'
+  SessionQry += "   and S.SQL_HASH_VALUE = ST.HASH_VALUE(+)"                                                        + '\n'
+  SessionQry += "   and (S.sid != :MYSID and S.serial# != :MYSERIAL )"                                              + '\n'
+  SessionQry += " ORDER BY SI.SID, S.SERIAL#, S.SQL_HASH_VALUE, PIECE ASC"                                          + '\n'
+
+  # V_$SQLTEXT_WITH_NEWLINES
+  #  Name                 Type
+  #  -------------------- ------------------------------------
+  #  ADDRESS              RAW(8)
+  #  HASH_VALUE           NUMBER
+  #  SQL_ID               VARCHAR2(13)
+  #  COMMAND_TYPE         NUMBER
+  #  PIECE                NUMBER
+  #  SQL_TEXT             VARCHAR2(64)
+
+  #print SessionQry
+  #exit()
+  
+  # Connect to the database.
+  Connection = cx_Oracle.connect(AuthUser + '/' + AuthPasswd + '@' + DatabaseName)
+ 
+  # Set the module for this session.
+  Connection.module = CmdDesc + ':GetSessionInfo'
+
+  # Execute MySessionQry and retrieve the results.
+  MySessCur = Connection.cursor()
+  MySessCur.execute(MySessionQry);
+  MySessionRowset = MySessCur.fetchall()
+  MySessCur.close()
+
+  for row in MySessionRowset:
+    (MySid, MySerial) = row
+    ###~ print "MySid=%s\t\tMySerial=%s" % (MySid, MySerial)
+
+  MySid_MySerial = str(MySid) + ', ' + str(MySerial)
+  ###~ print MySid_MySerial
+
+  ###~ print SessionQry
+
+  # Execute SessionQry and retrieve the results.
+  SessCur = Connection.cursor()
+  SessCur.execute(SessionQry, MYSID = MySid, MYSERIAL = MySerial);
+  SessionRowset = SessCur.fetchall()
+  SessCur.close()
+  SessionCount = len(SessionRowset)
+
+  # Loop through the result set of all sessions discovered.
+  # --------------------------------------------------------
+  SessionDict        = {}
+  SessionListOfDict  = []
+  SqlTextDict        = {}
+  ThisKey            = ''
+  PrevKey            = ''
+ 
+  for row in SessionRowset:
+    # row is a tuple of unnamed values in the result set. Assign
+    # these values to variables named after the columns in the query.
+    # ----------------------------------------------------------------
+    DISCOVERY_DATE            = row[0]
+    STATUS                    = row[1]
+    SERIAL                    = row[2]
+    TYPE                      = row[3]
+    USERNAME                  = row[4]
+    OSUSER                    = row[5]
+    SERVER                    = row[6]
+    MACHINE                   = row[7]
+    MODULE                    = row[8]
+    SERVICE_NAME              = row[9]
+    SQL_ID                    = row[10]
+    PLSQL_ENTRY_OBJECT_ID     = row[11]
+    PLSQL_ENTRY_SUBPROGRAM_ID = row[12]
+    CLIENT_INFO               = row[13]
+    TERMINAL                  = row[14]
+    PROGRAM                   = row[15]
+    PROGRAM                   = row[16]
+    LOGON_TIME                = row[17]
+    LOCKWAIT                  = row[18]
+    PHYSICAL_READS            = row[19]
+    BLOCK_GETS                = row[20]
+    CONSISTENT_GETS           = row[21]
+    BLOCK_CHANGES             = row[22]
+    CONSISTENT_CHANGES        = row[23]
+    PROCESS                   = row[24]
+    SPID                      = row[25]
+    PID                       = row[26]
+    SID                       = row[27]
+    AUDSID                    = row[28]
+    SQL_ADDRESS               = row[29]
+    SQL_HASH_VALUE            = row[30]
+    ACTION                    = row[31]
+    SQL_START_DATE            = row[32]
+    SQL_RUN_SECONDS           = row[33]
+    QCSID                     = row[34]
+    QCSERIAL                  = row[35]
+    SQL_TEXT                  = row[36]
+
+    # Replace tabs, newlines, carriage returns with ' '.
+    # ---------------------------------------------------
+    if (SQL_TEXT != None):
+      SQL_TEXT = SQL_TEXT.replace('\t', ' ')
+      SQL_TEXT = SQL_TEXT.replace('\r', '')
+      SQL_TEXT = SQL_TEXT.replace('\n', '')
+      if (len(SQL_TEXT) > 64):
+         SQL_TEXT += ' ...'
+
+    # Dictionary key (SID~SERIAL~SQL_HASH_VALUE) for storing extended SQL Text.
+    # -----------------------------------------------------------------------
+    ThisKey = str(SID) + '~' + str(SERIAL) + '~' + str(SQL_HASH_VALUE)
+
+    # Only do this once per session found even though there may be multiple rows
+    # per session due to sql statements > 64 bytes long (ie. multiple SQL Text
+    # pieces).
+    # ------------------------------------------------------------------------------
+    if (ThisKey != PrevKey):           # more SQL Text
+      SessionDict = {
+       'DISCOVERY_DATE'            : DISCOVERY_DATE,
+       'STATUS'                    : STATUS,
+       'SERIAL'                    : SERIAL,
+       'TYPE'                      : TYPE,
+       'USERNAME'                  : USERNAME,
+       'OSUSER'                    : OSUSER,
+       'SERVER'                    : SERVER,
+       'MACHINE'                   : MACHINE,
+       'MODULE'                    : MODULE,
+       'SERVICE_NAME'              : SERVICE_NAME,
+       'SQL_ID'                    : SQL_ID,
+       'PLSQL_ENTRY_OBJECT_ID'     : PLSQL_ENTRY_OBJECT_ID,
+       'PLSQL_ENTRY_SUBPROGRAM_ID' : PLSQL_ENTRY_SUBPROGRAM_ID,
+       'CLIENT_INFO'               : CLIENT_INFO,
+       'TERMINAL'                  : TERMINAL,
+       'PROGRAM'                   : PROGRAM,
+       'PROGRAM'                   : PROGRAM,
+       'LOGON_TIME'                : LOGON_TIME,
+       'LOCKWAIT'                  : LOCKWAIT,
+       'PHYSICAL_READS'            : PHYSICAL_READS,
+       'BLOCK_GETS'                : BLOCK_GETS,
+       'CONSISTENT_GETS'           : CONSISTENT_GETS,
+       'BLOCK_CHANGES'             : BLOCK_CHANGES,
+       'CONSISTENT_CHANGES'        : CONSISTENT_CHANGES,
+       'PROCESS'                   : PROCESS,
+       'SPID'                      : SPID,
+       'PID'                       : PID,
+       'SID'                       : SID,
+       'AUDSID'                    : AUDSID,
+       'SQL_ADDRESS'               : SQL_ADDRESS,
+       'SQL_HASH_VALUE'            : SQL_HASH_VALUE,
+       'ACTION'                    : ACTION,
+       'SQL_START_DATE'            : SQL_START_DATE,                # SYSDATE - (LAST_CALL_ET / (60*60*24)) in YYYY-MM-DD HH24:MI:SS format.
+       'SQL_RUN_SECONDS'           : SQL_RUN_SECONDS,               # LAST_CALL_ET column.
+       'QCSID'                     : QCSID,
+       'QCSERIAL'                  : QCSERIAL,
+       'SQL_TEXT'                  : SQL_TEXT
+      }
+      SessionListOfDict.append(SessionDict)
+      SqlTextDict[SQL_HASH_VALUE] = SQL_TEXT
+      PrevKey = ThisKey;
+    else:                            # Okay now we are ready to save the structure with the complete SQL Text
+      SqlTextDict[SQL_HASH_VALUE] += SQL_TEXT
+    PrevKey = ThisKey;
+
+  # Now we need to connect the SQL Hash values among PQ Slave and PQ Coordinator. This allows
+  # me to associate the PQ Slave process with the SQL of the PQ Coordinator process later if needed.
+  rnum  = 0
+  rnum2 = 0
+  for row in SessionListOfDict:
+    if ((row['QCSID'] != '') and (row['QCSERIAL'] != '')):                         # Parallel Query Slave Process
+      for row2 in SessionListOfDict:
+        if ((row2['QCSID'] != '') and (row2['QCSERIAL'] == '')):                   # Parallel Query Coordinator Process
+          if ((row['QCSID'] == row2['SID']) and (row['QCSERIAL'] == row2['SERIAL'])):
+            # Okay, now that you have found the PQ Parent's SQL Hash, assign it to
+            # the PQ Child's SQL Hash.
+            # --------------------------------------------------------------------------
+            ###~ print "Parent Hash Before : SessionListOfDict[rnum2]['SQL_HASH_VALUE']  =",SessionListOfDict[rnum2]['SQL_HASH_VALUE']
+            ###~ print "Child Hash Before  : SessionListOfDict[rnum]['SQL_HASH_VALUE']   =",SessionListOfDict[rnum]['SQL_HASH_VALUE']
+            SessionListOfDict[rnum]['SQL_HASH_VALUE'] = SessionListOfDict[rnum2]['SQL_HASH_VALUE']
+            ###~ print "Parent Hash Before : SessionListOfDict[rnum2]['SQL_HASH_VALUE']  =",SessionListOfDict[rnum2]['SQL_HASH_VALUE']
+            ###~ print "Child Hash Before  : SessionListOfDict[rnum]['SQL_HASH_VALUE']   =",SessionListOfDict[rnum]['SQL_HASH_VALUE']
+        rnum2 += 1
+    rnum += 1
+
+  # Disconnect from the database
+  # ------------------------------
+  Connection.close()
+
+  return(SessionListOfDict, SqlTextDict)
+# End GetSessionInfo()
+
+# Def  : KillSession()
+# Desc : Kills an Oracle database session using 'alter system kill session ...'
+# Args : DatabaseName, Username, password, Sid+Serial
+# Retn :
+#---------------------------------------------------------------------------
+def KillSession(DatabaseName, AuthUser, AuthPasswd, SidSerial):
+  Connection = cx_Oracle.connect(AuthUser + '/' + AuthPasswd + '@' + DatabaseName)
+  Connection.module = CmdDesc + ':KillSession'
+  KillCur = Connection.cursor()
+ 
+  try:
+    KillCur.execute("ALTER SYSTEM KILL SESSION '" + SidSerial + "'");
+  except cx_Oracle.DatabaseError as exc:
+      error, = exc.args
+      print("Oracle-Error-Code: %s" % (error.code))
+      print("Oracle-Error-Message: %s" % (error.message))
+
+  KillCur.close()
+  Connection.close()
+  return()
+# End KillSession()
+
+# --------------------------------------
+# ---- End Function Definitions --------
+# --------------------------------------
+
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  Interactive    = stdout.isatty()
+  Cmd            = basename(argv[0])
+  HomeDir        = path.split(argv[0])[0]
+  OutputDir      = '/home/oracle/dba/log'
+  CmdPrefix      = Cmd.split('.')[0]
+  CmdDesc        = 'SessionSniper'
+  Version        = '1.01'
+  OratabFile     = '/etc/oratab'
+  PasswdFilename = '/home/oracle/dba/etc/.passwd';
+  Now            = datetime.now()
+  StartTime      = Now.strftime("%Y%m%d.%H%M%S")
+  DateTime       = Now.strftime("%Y%m%d.%H%M%S")
+  MsgDate        = Now.strftime("%Y-%m-%d %H:%M:%S")
+  HostName       = gethostname()
+  ExemptUsers    = []
+  Banner         = 'Session Sniper, Release ' + Version + ' Production, Tue Apr 2 13:50:35 CDT 2013'
+
+  # Initialize User Exemption List
+  ExemptUsers.append('DBSNMP')
+  ExemptUsers.append('SYS')
+  ExemptUsers.append('SYSTEM')
+
+  # Process command line options
+  # ----------------------------------
+  parser = OptionParser(usage= Cmd + ' [options]' + '\n\nExample: ' + Cmd + ' -d ICPL -s ICPL -u system -t 900 -p 300 -o -v -e -k')
+  parser.add_option("-e",        action="store_true",  dest="Email",        default=False,           help="Email output file daily",     metavar='Email')
+  parser.add_option("-k",        action="store_true",  dest="Kill",         default=False,           help="Kill sessions",               metavar='Kill')
+  parser.add_option("-o",        action="store_true",  dest="Output",       default=False,           help="Create output file",          metavar='Output')
+  parser.add_option("-d",                              dest="DbName",       default='',    type=str, help="Database name",               metavar='DatabaseName')
+  parser.add_option("-s",                              dest="SvcName",      default='',    type=str, help="Service name (filter)",       metavar='ServiceName')
+  parser.add_option("-t",                              dest="Thresh",       default=0,     type=int, help="Threshold (in seconds)",      metavar='Threshold')
+  parser.add_option("-p",                              dest="PollPd",       default=0,     type=int, help="Polling Period (in seconds)", metavar='PollingPeriod')
+  parser.add_option("-l",                              dest="Level",        default=0,     type=int, help="Log levels 0, 1, 2",          metavar='Loglevel')
+  parser.add_option("-u",                              dest="User",         default='',    type=str, help="Authentication user account", metavar='AuthUser')
+  parser.add_option("-v",        action="store_true",  dest="Verbose",      default=False,           help="Verbose output",              metavar='Verbose')
+  parser.add_option("--v",       action="store_true",  dest="ShowVer",      default=False,           help="print version info.",         metavar='ShowVer')
+
+  Option, Args = parser.parse_args()
+  Argc = len(Args)
+
+  Email         = Option.Email  
+  Killswitch    = Option.Kill   
+  Output        = Option.Output 
+  DatabaseName  = Option.DbName 
+  ServiceName   = Option.SvcName.upper()
+  Threshold     = Option.Thresh 
+  PollingPeriod = Option.PollPd 
+  LogLevel      = Option.Level  
+  AuthUser      = Option.User   
+  Verbose       = Option.Verbose
+  ShowVer       = Option.ShowVer
+
+  if (PollingPeriod == 0):
+    PollingPeriod = 5*60;             # Default polling period is 5 minutes (in seconds).
+ 
+  if (Threshold == 0):
+    Threshold = 15*60;            # 15 minutes (in seconds).
+
+  if (PollingPeriod > 60):
+    Mod = str(float(PollingPeriod)/60).split('.')[1]
+    PollMin = round(float(str(PollingPeriod/60) + '.' + str(Mod)),1)
+    del(Mod)
+
+  if (Threshold > 60):
+    Mod = str(float(Threshold)/60).split('.')[1]
+    ThreshMin = round(float(str(Threshold/60) + '.' + str(Mod)),1)
+    del(Mod)
+
+  if (ShowVer):
+    print('\n' + Banner)
+    exit(0)
+
+  if (AuthUser == ''):
+    AuthUser = 'system'
+
+  # Setup the Oracle environment and setup Oracle commands.
+  # --------------------------------------------------------
+  Oratab = LoadOratab()
+
+  if ('ORACLE_SID' in list(environ.keys())):
+    Sid = environ['ORACLE_SID']
+  else:
+    Sid = ''
+
+  (OracleSid, OracleHome) = SetOracleEnv(Sid, Oratab)
+
+  if (DatabaseName == ''):
+    DatabaseName = environ['ORACLE_SID']
+
+
+  if (Email):
+    # Build Envelope Hash for Mime Addressing
+    # ----------------------------------------------------
+    MsgSizeLimit     = 20447232  # 19.5 MB. Actual limit is 20 MB.
+    MailServer       = 'bart.enkitec.com'
+    ReturnAddr       = 'oracle@' + HostName
+    MsgSubject       = 'Default subject.'
+    MsgBody          = 'Default message.'
+    MsgSubject       = 'Default subject.'
+    MsgBody          = 'Default message.'
+    EmbedFlag        = 'T';
+    DistributionList = []
+    DistributionList.append('dwight.evans@enkitec.com')
+#    DistributionList.append('kyle.smith@brinksinc.com')
+
+  AuthPasswd = GetPassword(DatabaseName, AuthUser)
+  if (AuthPasswd == ''):
+    print("Password lookup failed for: %s:%s\n" % (DatabaseName, AuthUser))
+    exit(1)
+  #AuthPasswd = AuthPasswd.decode('base64','strict')         # uncomment this line to decode password
+
+  LastPollDate = ''
+  OutFilename  = ''
+  while (1):
+    CurrentPollDate = datetime.now()
+    CurrentPollDate = CurrentPollDate.strftime("%Y%m%d")
+
+    if (isfile(OutFilename) and (Email)):
+      # Email the output file.
+      try:
+        Outfile = open(OutFilename, 'r')
+        OutfileContents = Outfile.read()
+        Outfile.close()
+        RowCount = len(OutfileContents.split())
+      except:
+        print('\nCannot open output file for read:', OutFilename)
+        print('Aborting email notification.')
+      else:
+        if (Email and RowCount > 1):
+          print("Sending daily report file...")
+          SendReport(DistributionList, OutfileContents, MsgSizeLimit)
+   
+    if (CurrentPollDate != LastPollDate):      # first time through this will always be true (assume first execution is a new day)
+      if (isfile(OutFilename) and (Email)):
+        # Email the output file.
+        try:
+          Outfile = open(OutFilename, 'r')
+          OutfileContents = Outfile.read()
+          Outfile.close()
+          RowCount = len(OutfileContents.split())
+        except:
+          print('\nCannot open output file for read:', OutFilename)
+          print('Aborting email notification.')
+        else:
+          if (Email and RowCount > 1):
+            print("Sending daily report file...")
+            SendReport(DistributionList, OutfileContents, MsgSizeLimit)
+     
+      if (Output):
+        # Set output file name.
+        OutFilename = path.join(OutputDir, CmdPrefix  + '_' + DatabaseName  + '_' + CurrentPollDate + '.xls')
+       
+        # Write the header to the output file.
+        try:
+          Outfile = open(OutFilename, 'w')
+          Outfile.write("MACHINE\tTERMINAL\tPROGRAM\tMODULE\tSQL_ID\tPLSQL_ENTRY_OBJECT_ID\tPLSQL_ENTRY_SUBPROGRAM_ID\tPID\tSID\tSPID\tPROCESS\tSERIAL\tTYPE\tUSERNAME\tOSUSER\tLOGON_TIME\tSQL_START_DATE\tSQL_RUN_SECONDS\tSQL_HASH_VALUE\tPHYSICAL_READS\tBLOCK_GETS\tCONSISTENT_GETS\tBLOCK_CHANGES\tCONSISTENT_CHANGES\tSQL_TEXT\n")
+          Outfile.close()
+        except:
+          print("Cannot open %s for write." % (OutFilename))
+          exit(1)
+    
+      # Print the banner
+      # -------------------
+      Now            = datetime.now()
+      StartTime      = Now.strftime("%Y-%m-%d %H:%M:%S")
+      print("\n\n========================================================================")
+      print("Program        : %-20s %34s"   % (Cmd, StartTime))
+      print("Database       : %-20s"        % (DatabaseName))
+      if (ServiceName != ''):
+        print("Service Name   : %-20s"      % (ServiceName))
+      if (Killswitch):
+        print("Run Mode       : Kill")
+      else:
+        print("Run Mode       : Report")
+      if (Threshold > 60):
+        print("Threshold      : %s minutes" % (ThreshMin))
+      else:
+        print("Threshold      : %s seconds" % (Threshold))
+      if (PollingPeriod > 60):
+        print("Polling Period : %s minutes" % (PollMin))
+      else:
+        print("Polling Period : %s seconds" % (PollingPeriod))
+      if (Output):
+        print("Output File    : %s" % (OutFilename))
+      print("========================================================================\n")
+     
+    # Pull a list of sessions
+    print("Checking for long running SQL...")
+    (SessionListOfDict, SqlTextDict) = GetSessionInfo(DatabaseName, AuthUser, AuthPasswd, ExemptUsers)
+
+    for row in SessionListOfDict:
+      if (row['SQL_RUN_SECONDS'] > Threshold):
+        if (Verbose):
+           SqlHash = row['SQL_HASH_VALUE']
+           print()
+           print('   MACHINE            = %s' % (row['MACHINE']))
+           print('   TERMINAL           = %s' % (row['TERMINAL']))
+           print('   PROGRAM            = %s' % (row['PROGRAM']))
+           print('   MODULE             = %s' % (row['MODULE']))
+           print('   USERNAME           = %s' % (row['USERNAME']))
+           print('   SQL_ID             = %s' % (row['SQL_ID']))
+           print('   SQL_RUN_SECONDS    = %s' % (row['SQL_RUN_SECONDS']))
+           print('   SQL_TEXT           = %s' % (SqlTextDict[SqlHash]))
+           print()
+
+        # Derive an all-string type row to be used for printing, logging, etc...
+        PrtRec = row
+        for key in list(PrtRec.keys()):
+          if (PrtRec[key] == None):
+            PrtRec[key] = ''
+          else:
+            if (type(PrtRec[key]) != str):
+              PrtRec[key] = str(PrtRec[key])
+
+        if (Output):
+          # Write the header to the output file.
+          try:
+            Outfile = open(OutFilename, 'a')
+            Outfile.write(PrtRec['MACHINE']+'\t'+PrtRec['TERMINAL']+'\t'+PrtRec['PROGRAM']+'\t'+PrtRec['MODULE']+'\t'+PrtRec['SQL_ID']+'\t'+PrtRec['PLSQL_ENTRY_OBJECT_ID']+'\t'+PrtRec['PLSQL_ENTRY_SUBPROGRAM_ID']+'\t'+PrtRec['PID']+'\t'+PrtRec['SID']+'\t'+PrtRec['SPID'] + '\t' + PrtRec['PROCESS'] + '\t' + PrtRec['SERIAL'] + '\t' + PrtRec['TYPE'] + '\t' + PrtRec['USERNAME'] + '\t' + PrtRec['OSUSER'] + '\t' + PrtRec['LOGON_TIME'] + '\t' + PrtRec['SQL_START_DATE']+'\t'+PrtRec['SQL_RUN_SECONDS']+'\t'+PrtRec['SQL_HASH_VALUE']+'\t'+PrtRec['PHYSICAL_READS']+'\t'+PrtRec['BLOCK_GETS']+'\t'+PrtRec['CONSISTENT_GETS']+'\t'+PrtRec['BLOCK_CHANGES']+'\t'+PrtRec['CONSISTENT_CHANGES']+'\t'+PrtRec['SQL_TEXT']+'\n')
+            Outfile.close()
+          except:
+            print("Cannot open %s for write." % (OutFilename))
+            exit(1)
+                             
+        if (Killswitch):
+          # This is the kill session logic.
+          # -----------------------------------
+          SidSerial = row['SID'] + ", " + row['SERIAL']
+          print('Killing Session [SID,Serial]:', SidSerial)
+          KillSession(DatabaseName, AuthUser, AuthPasswd, SidSerial)
+
+    if (PollingPeriod > 60):
+       print("Sleeping %s minutes..." % (PollMin))
+    else:
+       print("Sleeping %s seconds..." % (PollingPeriod))
+    sleep(PollingPeriod)
+
+    LastPollDate = CurrentPollDate
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------
+
+
+
+# --------------------------------------
+# ---- Program Notes -------------------
+# --------------------------------------
+'''
+Test Query
+
+select /*+ PARALLEL(a,2) PARALLEL(b,2) PARALLEL(c,2) PARALLEL(e,2) PARALLEL(f,2) PARALLEL(g,2) */
+       count(*)
+  from mytab a,
+       mytab b,
+       mytab c,
+       mytab d,
+       mytab e,
+       mytab f,
+       mytab g;
+
+'''
+

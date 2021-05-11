@@ -1,0 +1,266 @@
+#!/bin/env python
+
+##################################################################################################
+#  Name:        reconfiles                                                                       #
+#  Author:      Randy Johnson                                                                    #
+#  Description: Compares a list of files (manifest.txt) with those of the same name on the file  #
+#               system. Files are located by name and compared by size.                          #
+#                                                                                                #
+#  Usage: usage: transest [options]                                                              #
+#  options:                                                                                      #
+#    -h, --help   show this help message and exit.                                               #
+#    -d LZSUBDIR  Landing zone sub directory.                                                    #
+#    -f FILTER    Where filename like *Filter*.                                                  #
+#    -m MANIFEST  Manifest.                                                                      #
+#    -t           Print minimal output.                                                          #
+#    -v           print version info.                                                            #
+#                                                                                                #
+# History:                                                                                       #
+#                                                                                                #
+# Date       Ver. Who              Change Description                                            #
+# ---------- ---- ---------------- ------------------------------------------------------------- #
+# 12/10/2014 1.00 Randy Johnson    Initial release.                                              #
+#                                                                                                #
+# Todo's                                                                                         #
+#  - None at this time.                                                                          #
+#                                                                                                #
+# Wish List:                                                                                     #
+#  - None at this time.                                                                          #
+##################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+from datetime  import datetime
+from sys       import exit
+from sys       import argv
+from optparse  import OptionParser
+from re        import compile
+from os        import walk
+from os        import stat
+from os.path   import join as pathjoin
+from os.path   import basename
+
+
+# --------------------------------------
+# -- Function/Class Definitions --------
+# --------------------------------------
+
+# Def : splitThousands()
+# Desc: Simple function to format numbers with commas to separate thousands.
+# Args: s    = numeric_string
+#       tSep = thousands_separation_character (default is ',')
+#       dSep = decimal_separation_character (default is '.')
+# Retn: formatted string
+#---------------------------------------------------------------------------
+def splitThousands( s, tSep=',', dSep='.'):
+  '''Splits a general float on thousands. GIGO on general input'''
+  if s == None:
+    return(0)
+  if not isinstance( s, str ):
+    s = str( s )
+
+  cnt=0
+  numChars=dSep+'0123456789'
+  ls=len(s)
+  while cnt < ls and s[cnt] not in numChars: cnt += 1
+
+  lhs = s[ 0:cnt ]
+  s = s[ cnt: ]
+  if dSep == '':
+    cnt = -1
+  else:
+    cnt = s.rfind( dSep )
+  if cnt > 0:
+    rhs = dSep + s[ cnt+1: ]
+    s = s[ :cnt ]
+  else:
+    rhs = ''
+
+  splt=''
+  while s != '':
+    splt= s[ -3: ] + tSep + splt
+    s = s[ :-3 ]
+
+  return(lhs + splt[ :-1 ] + rhs)
+# End splitThousands
+
+# --------------------------------------
+# -- End Function/Class Definitions ----
+# --------------------------------------
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  ArgParser           = OptionParser()
+  Cmd                 = basename(argv[0])
+  CmdPrefix           = Cmd.split('.')[0]
+  CmdDesc             = 'Reconcile Files (' + Cmd + ')'
+  Environment         = 'Production'
+  FileDict            = {}
+  FileList            = []
+  LandingZone         = []
+  LzPathList          = []
+  ManifestDict        = {}
+  MismatchedFiles     = []
+  MissingFiles        = []
+  Now                 = datetime.now()
+  PathList            = []
+  RecNo               = 0
+  SourceBytes         = 0
+  TargetBytes         = 0
+  TargetDict          = {}
+  TotalActualBytes    = 0
+  TotalActualCount    = 0
+  TotalExpectedBytes  = 0
+  TotalExpectedCount  = 0
+  Version             = '1.00'
+  VersionDate         = 'Thu Dec 11 2:15:00 UTC 2014'
+
+  Banner = CmdDesc + ', Release ' + Version + ' ' + Environment + ', ' + VersionDate
+
+  # Process command line options
+  # ----------------------------------
+  ArgParser.add_option("-d", dest="LandingZone", default='./',                       type=str, help="Landing zone directory(s).")
+  ArgParser.add_option("-f", dest="Filter",      default='',                         type=str, help="Where filename like *Filter*.")
+  ArgParser.add_option("-m", dest="Manifest",    default='manifest.txt',             type=str, help="File containing files to verify.")
+  ArgParser.add_option("-v", dest="Version",     default=False, action="store_true",           help="print version info.")
+
+  Options, args = ArgParser.parse_args()
+  argc = len(args)
+
+  print()
+
+  if (Options.Version):
+    print(Banner)
+    exit()
+
+  LandingZone   = Options.LandingZone
+  Filter        = Options.Filter
+  Manifest      = Options.Manifest
+
+  # Set the list of directories to search for copied files.
+  # ---------------------------------------------------------
+  LzPathList = LandingZone.split(',')
+
+  # Open the manifest and load up the list of files.
+  # -------------------------------------------------
+  try:
+    h = open(Manifest, 'r')
+  except:
+    print("Cannot open file transfer manifest for read:", Manifest)
+    exit(1)
+
+  if (Filter != ''):
+    Filemask = compile(r'^.*' + Filter + '.*')
+  else:
+    Filemask = compile(r'^.*')
+
+  RecNo = 0
+  for line in h.read().split('\n'):
+    RecNo += 1
+    line = line.strip()
+    if (line != ''):
+      if (Filemask.search(line)):
+        try:
+          Bytes, Filename = line.split()
+          Bytes = int(Bytes)
+        except:
+          print('Record parsing failed in manifest:', Manifest)
+          print('Record format must be: "Bytes Filename"')
+          print('Error at line:', RecNo, '>>', line)
+          exit(1)
+
+        TotalExpectedBytes += Bytes
+        TotalExpectedCount += 1
+        ManifestDict[Filename] = {'Bytes' : Bytes}
+
+  # Walk the directory and subs and load up the list with files found.
+  # -------------------------------------------------------------------
+  TargetDict    = {}
+  TotalActualBytes   = 0
+  TotalActualCount   = 0
+  # Walk the directory and subs and load up the list with files found.
+  # -------------------------------------------------------------------
+  for StartingDir in LzPathList:
+    StartingDir = pathjoin(StartingDir)
+    for (path, dirs, files) in walk(StartingDir):
+      for file in files:
+        if (Filemask.search(file)):
+          filepath = pathjoin(path,file)
+          (mode,inode,dev,nlink,uid,gid,bytes,atime,mtime,ctime) = stat(filepath)
+          FileDict[file] = {
+           'Mode'  : mode,
+           'Inode' : inode,
+           'Dev'   : dev,
+           'Nlink' : nlink,
+           'Uid'   : uid,
+           'Gid'   : gid,
+           'Bytes' : bytes,
+           'Atime' : atime,
+           'Mtime' : mtime,
+           'Ctime' : ctime
+          }
+          PathList.append((ctime,filepath,bytes,atime,mtime))
+
+  MissingFiles = []
+  MismatchedFiles = {}
+  FileList = list(FileDict.keys())
+  for Manfile in sorted(ManifestDict.keys()):
+    if Manfile in FileList:
+      SourceBytes = ManifestDict[Manfile]['Bytes']
+      TargetBytes = FileDict[Manfile]['Bytes']
+      TotalActualBytes += TargetBytes
+      TotalActualCount += 1
+      if (TargetBytes != SourceBytes):
+         MismatchedFiles[Manfile] = {'SourceBytes':SourceBytes, 'TargetBytes':TargetBytes}
+    else:
+      MissingFiles.append(Manfile)
+
+  # Print the report.
+  # -------------------
+  print('==========================================================================================================');
+  print('Reconcile Files                                               %44s' % (Now.strftime("%Y-%m-%d %H:%M")));
+  print('==========================================================================================================');
+  print('Landing zone      :', LzPathList[0])
+  if (len(LzPathList) > 1):
+    print('                  :', join(LzPathList[1:len(LzPathList)],'\n                  : '))
+  if (Filter != ''):
+    print('Filename Filter   : *%s*'    % (Filter))
+  else:
+    print('Filename Filter   : <none>')
+  print('----------------------------------------------------------------------------------------------------------')
+
+  print('\nMissing Files:\n')
+  print('   %-60s' % ('File'))
+  print('   %-60s' % ('------------------------------------------------------------'))
+  if (len(MissingFiles) > 0):
+    for file in MissingFiles:
+      print('   %-60s' % (file))
+  else:
+    print('   <all files present>')
+
+  MismatchedFileKeys = list(MismatchedFiles.keys())
+  if (len(MismatchedFileKeys) > 0):
+    print('\nFiles with incorrect size:\n')
+    print('   %-60s %20s %20s' % ('File','Source Size','Target Size'))
+    print('   %-60s %20s %20s' % ('------------------------------------------------------------','--------------------','--------------------'))
+    for file in MismatchedFileKeys:
+      print('   %-60s %20s %20s' % (file, splitThousands(MismatchedFiles[file]['SourceBytes']), splitThousands(MismatchedFiles[file]['TargetBytes'])))
+
+  CountDiff = TotalExpectedCount - TotalActualCount
+  BytesDiff = TotalExpectedBytes - TotalActualBytes
+
+  print('\n\n')
+  print('          File Count                File Storage')
+  print('Expected  %10s        %20s '                        % (splitThousands(TotalActualCount), splitThousands(TotalExpectedBytes)))
+  print('Actual    %10s        %20s'                         % (splitThousands(TotalExpectedCount), splitThousands(TotalActualBytes)))
+  print('         -----------   -------------------------')
+  print('Diff      %10s        %20s'                         % (splitThousands(CountDiff), splitThousands(BytesDiff)))
+
+  exit(0)
+
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------

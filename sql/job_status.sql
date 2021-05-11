@@ -1,0 +1,2 @@
+select SESSION_RECID,MBYTES_PROCESSED/1024,OUTPUT_BYTES/1048576/1024,(END_TIME-START_TIME)*24 "Elapsed"
+ from v$rman_status where status like 'RUNN%';

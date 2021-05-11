@@ -1,0 +1,40 @@
+#!/bin/env python
+
+import sqlite3
+
+table_name = 'my_table_3'
+
+# Connecting to the database file
+conn = sqlite3.connect(':memory:')
+c = conn.cursor()
+
+# Retrieve column information
+# Every column will be represented by a tuple with the following attributes:
+# (id, name, type, notnull, default_value, primary_key)
+c.execute("create table " + table_name + "(col1 text, col2 real, col3 integer, col4 null, col5 blob)")
+c.execute('PRAGMA TABLE_INFO({})'.format(table_name))
+
+# Traverse the result set...
+for row in c.fetchall():
+  print(row)
+
+# Get the table definition and print the column names...
+c.execute('PRAGMA TABLE_INFO({})'.format(table_name))
+
+# Fetch all rows...
+rowset = c.fetchall()
+
+# Use List comprehension to traverse the result set and 
+# create a list object containing the column names.
+columns = [tup[1] for tup in rowset]
+print(columns)
+
+# Insert some data then query it back out...
+rs = c.execute("INSERT INTO " + table_name + " values('TEST',1.23,100,NULL,NULL);")
+rs = c.execute("SELECT * FROM " + table_name + ";")
+all_rows = c.fetchall()
+for row in all_rows:
+  print(row)
+
+# Close the connection to the database
+conn.close()

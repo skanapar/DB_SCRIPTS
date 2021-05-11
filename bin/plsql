@@ -1,0 +1,359 @@
+#!/bin/env python
+
+##################################################################################################
+#  Name:        plsql test                                                                       #
+##################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+from optparse     import OptionParser
+from os           import environ
+from os.path      import basename
+from sys          import argv
+from sys          import exit
+from sys          import version_info
+from signal       import SIGPIPE
+from signal       import SIG_DFL
+from signal       import signal
+from Oracle       import RunSqlplus
+from Oracle       import SetOracleEnv
+from Oracle       import ParseConnectString
+from Oracle       import PrintError
+
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  Cmd            = basename(argv[0]).split('.')[0]
+  CmdDesc        = 'Report System Time'
+  Version        = '2.00'
+  VersionDate    = 'Mon Jul 31 11:15:14 CDT 2015'
+  DevState       = 'Production'
+  Banner         = CmdDesc + ': Release ' + Version + ' '  + DevState + '. Last updated: ' + VersionDate
+  Sql            = ''
+  SqlHeader      = '/***** ' + CmdDesc.upper() + ' *****/'
+  ErrChk         = False
+  ArgParser      = OptionParser()
+  InStr          = ''
+  ConnStr        = ''
+  InstList       = []
+
+
+  # For handling termination in stdout pipe; ex: when you run: oerrdump | head
+  signal(SIGPIPE, SIG_DFL)
+
+  # Check/setup the Oracle environment
+  if (not('ORACLE_SID' in list(environ.keys()))):
+    print('ORACLE_SID is required.')
+    exit(1)
+  else:
+    # Set the ORACLE_HOME just in case it isn't set already.
+    if (not('ORACLE_HOME' in list(environ.keys()))):
+      (OracleSid, OracleHome) = SetOracleEnv(environ['ORACLE_SID'])
+
+  ArgParser.add_option('-g',  dest='Global',     action='store_true', default=False,            help="search gv$sysemtric (default is v$sysmetric)")
+  ArgParser.add_option('-i',  dest='Instances',                       default='',    type=str,  help="WHERE inst_id in 1,2,3,...")
+  ArgParser.add_option('-m',  dest='Name',                            default='',    type=str,  help="WHERE upper(stat_name) like '%CPU%'")
+  ArgParser.add_option('--s', dest='Show',       action='store_true', default=False,            help="print SQL query.")
+  ArgParser.add_option('--v', dest='ShowVer',    action='store_true', default=False,            help="print version info.")
+
+  # Parse command line arguments
+  Options, args = ArgParser.parse_args()
+
+  Global    = Options.Global
+  Instances = Options.Instances
+  Name      = Options.Name
+  Show      = Options.Show
+  ShowVer   = Options.ShowVer
+
+  if (ShowVer == True):
+    print('\n%s' % Banner)
+    exit()
+
+  if(Instances != ''):
+    Global = True
+    InstList = Instances.split(',')
+    try:
+      if (version_info[0] >= 3):
+        InstList = list(map(int, InstList))
+        InstList = list(map(str, InstList))
+      else:
+        InstList = map(int, InstList)
+        InstList = map(str, InstList)
+    except:
+      print("Instance list must be in integer form, eg. -i 1,2,3,4")
+      exit(1)
+
+
+#-- Varray Example
+#--
+#-- DECLARE
+#--    TYPE nested_type           IS TABLE     OF VARCHAR2(30);
+#--    TYPE varray_type           IS VARRAY(5) OF INTEGER;
+#--    TYPE assoc_array_num_type  IS TABLE     OF NUMBER INDEX BY PLS_INTEGER;
+#--    TYPE assoc_array_str_type  IS TABLE     OF VARCHAR2(32) INDEX BY PLS_INTEGER;
+#--    TYPE assoc_array_str_type2 IS TABLE     OF VARCHAR2(32) INDEX BY VARCHAR2(64);
+#--
+#--    v1 nested_type;
+#--    v2 varray_type;
+#--    v3 assoc_array_num_type;
+#--    v4 assoc_array_str_type;
+#--    v5 assoc_array_str_type2;
+#
+#-- BEGIN
+#--    v1           := nested_type('Shipping','Sales','Finance','Payroll');   --< an arbitrary number of strings can be inserted v1
+#--    v2           := varray_type(1, 2, 3, 4, 5);                            --< Up to 5 integers
+#--    v3(99)       := 10;                                                    --< Just start assigning to elements
+#--    v3(7)        := 100;                                                   --< Subscripts can be any integer values
+#--    v4(42)       := 'Smith';                                               --< Just start assigning to elements
+#--    v4(54)       := 'Jones';                                               --< Subscripts can be any integer values
+#--    v5('Canada') := 'North America';                                       --< Just start assigning to elements
+#--    v5('Greece') := 'Europe';                                              --< Subscripts can be string values
+#-- END;
+#-- /
+#-- 
+
+
+Sql = \
+"""
+declare
+  inst_id number(2) := 0;
+  TYPE    numarray  IS VARRAY(99) OF NUMBER(2);   
+  CURSOR  inst_list IS 
+       SELECT inst_id 
+         FROM gv$sys_time_model 
+     GROUP BY inst_id
+     ORDER BY inst_id;
+  CURSOR  c1 IS
+     SELECT LPAD(' ', 2*level-1)||stat_name stat_name
+          , ROUND(value/1000000,2)          seconds
+          , ROUND(value/1000000/60,2)       minutes
+       FROM (select 0 id, 9 pid, null stat_name, null value from dual
+              UNION
+             SELECT DECODE(stat_name,'DB time',10) id
+                  , DECODE(stat_name,'DB time',0) pid
+                  , stat_name
+                  , value
+               FROM gv$sys_time_model
+              WHERE stat_name = 'DB time'
+                AND inst_id   = 1
+              UNION
+             SELECT DECODE(stat_name,'DB CPU',20) id
+                  , DECODE(stat_name,'DB CPU',10) pid
+                  , stat_name
+                  , value
+               FROM gv$sys_time_model
+              WHERE stat_name = 'DB CPU'
+                AND inst_id   = 1
+            )
+    CONNECT BY PRIOR id = pid START WITH id = 0;
+  
+  CURSOR  stat_report IS 
+     SELECT LPAD(' ', 2*level-1)||stat_name stat_name
+          , ROUND(value/1000000,2)          seconds
+          , ROUND(value/1000000/60,2)       minutes
+       FROM (select 0 id, 9 pid, null stat_name, null value from dual
+              UNION
+             SELECT DECODE(stat_name,'DB time',10) id
+                  , DECODE(stat_name,'DB time',0) pid
+                  , stat_name
+                  , value
+               FROM gv$sys_time_model
+              WHERE stat_name = 'DB time'
+                AND inst_id   = inst_id
+              UNION
+             SELECT DECODE(stat_name,'DB CPU',20) id
+                  , DECODE(stat_name,'DB CPU',10) pid
+                  , stat_name
+                  , value
+               FROM gv$sys_time_model
+              WHERE stat_name = 'DB CPU'
+                AND inst_id   = inst_id
+              UNION
+             SELECT DECODE(stat_name,'connection management call elapsed time',21) id
+                  , DECODE(stat_name,'connection management call elapsed time',10) pid
+                  , stat_name
+                  , value
+               FROM gv$sys_time_model
+              WHERE stat_name = 'connection management call elapsed time'
+                AND inst_id   = inst_id
+              UNION
+             SELECT DECODE(stat_name,'sequence load elapsed time',22) id
+                  , DECODE(stat_name,'sequence load elapsed time',10) pid
+                  , stat_name
+                  , value
+               FROM gv$sys_time_model
+              WHERE stat_name = 'sequence load elapsed time'
+                AND inst_id   = inst_id
+              UNION
+             SELECT DECODE(stat_name,'sql execute elapsed time',23) id
+                  , DECODE(stat_name,'sql execute elapsed time',10) pid
+                  , stat_name
+                  , value
+               FROM gv$sys_time_model
+              WHERE stat_name = 'sql execute elapsed time'
+                AND inst_id   = inst_id
+              UNION
+             SELECT DECODE(stat_name,'parse time elapsed',24) id
+                  , DECODE(stat_name,'parse time elapsed',10) pid
+                  , stat_name
+                  , value
+               FROM gv$sys_time_model
+              WHERE stat_name = 'parse time elapsed'
+                AND inst_id   = inst_id
+              UNION
+             SELECT DECODE(stat_name,'hard parse elapsed time',30) id
+                  , DECODE(stat_name,'hard parse elapsed time',24) pid
+                  , stat_name
+                  , value
+               FROM gv$sys_time_model
+              WHERE stat_name = 'hard parse elapsed time'
+                AND inst_id   = inst_id
+              UNION
+             SELECT DECODE(stat_name,'hard parse (sharing criteria) elapsed time',40) id
+                  , DECODE(stat_name,'hard parse (sharing criteria) elapsed time',30) pid
+                  , stat_name
+                  , value
+               FROM gv$sys_time_model
+              WHERE stat_name = 'hard parse (sharing criteria) elapsed time'
+                AND inst_id   = inst_id
+              UNION
+             SELECT DECODE(stat_name,'hard parse (bind mismatch) elapsed time',50) id
+                  , DECODE(stat_name,'hard parse (bind mismatch) elapsed time',40) pid
+                  , stat_name
+                  , value
+               FROM gv$sys_time_model
+              WHERE stat_name = 'hard parse (bind mismatch) elapsed time'
+                AND inst_id   = inst_id
+              UNION
+             SELECT DECODE(stat_name,'failed parse elapsed time',31) id
+                  , DECODE(stat_name,'failed parse elapsed time',24) pid
+                  , stat_name
+                  , value
+               FROM gv$sys_time_model
+              WHERE stat_name = 'failed parse elapsed time'
+                AND inst_id   = inst_id
+              UNION
+             SELECT DECODE(stat_name,'failed parse (out of shared memory) elapsed time',41) id
+                  , DECODE(stat_name,'failed parse (out of shared memory) elapsed time',31) pid
+                  , stat_name
+                  , value
+               FROM gv$sys_time_model
+              WHERE stat_name = 'failed parse (out of shared memory) elapsed time'
+                AND inst_id   = inst_id
+              UNION
+             SELECT DECODE(stat_name,'PL/SQL execution elapsed time',25) id
+                  , DECODE(stat_name,'PL/SQL execution elapsed time',10) pid
+                  , stat_name
+                  , value
+               FROM gv$sys_time_model
+              WHERE stat_name = 'PL/SQL execution elapsed time'
+                AND inst_id   = inst_id
+              UNION
+             SELECT DECODE(stat_name,'inbound PL/SQL rpc elapsed time',26) id
+                  , DECODE(stat_name,'inbound PL/SQL rpc elapsed time',10) pid
+                  , stat_name
+                  , value
+               FROM gv$sys_time_model
+              WHERE stat_name = 'inbound PL/SQL rpc elapsed time'
+                AND inst_id   = inst_id
+              UNION
+             SELECT DECODE(stat_name,'PL/SQL compilation elapsed time',27) id
+                  , DECODE(stat_name,'PL/SQL compilation elapsed time',10) pid
+                  , stat_name
+                  , value
+               FROM gv$sys_time_model
+              WHERE stat_name = 'PL/SQL compilation elapsed time'
+                AND inst_id   = inst_id
+              UNION
+             SELECT DECODE(stat_name,'Java execution elapsed time',28) id
+                  , DECODE(stat_name,'Java execution elapsed time',10) pid
+                  , stat_name
+                  , value
+               FROM gv$sys_time_model
+              WHERE stat_name = 'Java execution elapsed time'
+                AND inst_id   = inst_id
+              UNION
+             SELECT DECODE(stat_name,'repeated bind elapsed time',29) id
+                  , DECODE(stat_name,'repeated bind elapsed time',10) pid
+                  , stat_name
+                  , value
+               FROM gv$sys_time_model
+              WHERE stat_name = 'repeated bind elapsed time'
+                AND inst_id   = inst_id
+              UNION
+             SELECT DECODE(stat_name,'background elapsed time',1) id
+                  , DECODE(stat_name,'background elapsed time',0) pid
+                  , stat_name
+                  , value
+               FROM gv$sys_time_model
+              WHERE stat_name = 'background elapsed time'
+                AND inst_id   = inst_id
+              UNION
+             SELECT DECODE(stat_name,'background cpu time',2) id
+                  , DECODE(stat_name,'background cpu time',1) pid
+                  , stat_name
+                  , value
+               FROM gv$sys_time_model
+              WHERE stat_name = 'background cpu time'
+                AND inst_id   = inst_id
+              UNION
+             SELECT DECODE(stat_name,'RMAN cpu time (backup/restore)',3) id
+                  , DECODE(stat_name,'RMAN cpu time (backup/restore)',2) pid
+                  , stat_name
+                  , value
+               FROM gv$sys_time_model
+              WHERE stat_name = 'RMAN cpu time (backup/restore)'
+                AND inst_id   = inst_id
+            )
+    CONNECT BY PRIOR id = pid START WITH id = 0;
+
+begin
+  FOR inst_rec IN inst_list LOOP
+     inst_id := inst_rec.inst_id;
+     dbms_output.put_line(inst_rec.inst_id);
+     FOR report_rec IN stat_report LOOP
+       dbms_output.put_line(report_rec.stat_name);
+     END LOOP;
+  END LOOP;
+end;
+/
+"""
+
+Sql = Sql.strip()
+
+if(Show):
+  print('-----------cut-----------cut-----------cut-----------cut-----------cut-----------')
+  print(Sql)
+  print('-----------cut-----------cut-----------cut-----------cut-----------cut-----------')
+  exit()
+
+# Check/setup the Oracle environment
+if (not('ORACLE_SID' in list(environ.keys()))):
+  print('ORACLE_SID is required.')
+  exit(1)
+else:
+  # Set the ORACLE_HOME just in case it isn't set already.
+  if (not('ORACLE_HOME' in list(environ.keys()))):
+    (OracleSid, OracleHome) = SetOracleEnv(environ['ORACLE_SID'])
+
+# Parse the connect string if any, prompt for username, password if needed.
+if (len(args) > 0 and Show == False):
+  InStr = args[0]
+  ConnStr = ParseConnectString(InStr)
+
+# Execute the report
+if (ConnStr != ''):
+  (Stdout) = RunSqlplus(Sql, ErrChk, ConnStr)
+else:
+  (Stdout) = RunSqlplus(Sql, ErrChk)
+
+Stdout = '\n'.join(Stdout.split('\n\n'))       # cheap fix for the funky '\n\n' between the report header and report body.
+
+# Print the Report
+if (Stdout != ''):
+  print('\n%s' % Stdout)
+
+exit(0)

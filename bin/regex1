@@ -1,0 +1,25 @@
+#!/bin/env python
+
+import re
+
+######################
+### Uptime Example ###
+######################
+
+pattern = r'up\s+(.*?),\s+([0-9]+) users?,\s+load averages?: ([0-9]+\.[0-9][0-9]),?\s+([0-9]+\.[0-9][0-9]),?\s+([0-9]+\.[0-9][0-9])'
+uptime  = '14:34:59 up 10:54,  2 users,  load average: 1.18, 1.22, 1.22'
+found   = re.search(pattern, uptime)
+s       = found.start()
+e       = found.end()
+
+print('\nRegex Pattern Matching. Uptime Example:\n')
+print('             Uptime : %s'    % uptime)
+print('       found.string : %s'    % (found.string))
+print('   found.re.pattern : %s'    % (found.re.pattern)) 
+print('       found.span() : %s'    % repr(found.span()))
+print('type(found.span())) : %s'    % type(found.span()))
+print('      found.start() : %s'    % found.start())
+print('        found.end() : %s'    % found.end())
+print('      found.group() : %s'    % found.group())
+print('     found.groups() : %s'    % repr(found.groups()))
+

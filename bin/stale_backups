@@ -1,0 +1,754 @@
+#!/bin/env python
+
+##################################################################################################
+# Name:        stale_backups                                                                     #
+# Author:      Randy Johnson                                                                     #
+# Description: maintains the MYCO_STALE_BACKUP_EXCP table used by the stale_backups_report       #
+#              script.                                                                           #
+#                                                                                                #
+# usage: stale_backups [options]                                                                 #
+#                                                                                                #
+# usage:                                                                                         #
+#                                                                                                #
+# Deleting                                                                                       #
+# ----------                                                                                     #
+# The -d option is used to delete a database from the exceptions table.                          #
+# When deleting, all that is required is the dbid.                                               #
+#                                                                                                #
+#  For example:                                                                                  #
+#   > stale_backups-d 2519506222                                                                 #
+#                                                                                                #
+#  Where:  "2519506222" is the dbid                                                              #
+#                                                                                                #
+# Inserting                                                                                      #
+# ---------                                                                                      #
+# The -i option is used to insert a new database into the exceptions table.                      #
+# When inserting an expired database into the table the -i option is followed                    #
+# by a comma delimited string containing the database information.                               #
+#                                                                                                #
+#  For example:                                                                                  #
+#   > stale_backups -i FSPRD,2519506222                                                          #
+#   > stale_backups -i FSPRD,2519506222,90                                                       #
+#                                                                                                #
+#  Where:  "FSPRD" is the db_name                                                                #
+#       :  "FSPRDDAL" is the db_unique_name                                                      #
+#       :  "2519506222" is the dbid                                                              #
+#       :  "90" is the number of days to retain this dbid in the recovery catalog.               #
+#                                                                                                #
+# History:                                                                                       #
+#                                                                                                #
+# Date       Ver. Who              Change Description                                            #
+# ---------- ---- ---------------- ------------------------------------------------------------- #
+# 11/09/2012 1.00 Randy Johnson    Initial release.                                              #
+# 11/28/2012 1.10 Randy Johnson    Added logic to use DefaultSid if ORACLE_SID is not set.       #
+# 01/29/2012 1.20 Randy Johnson    Added logic to unregister obsolete databases from the         #
+#                                  recovery catalog. See UnregisterObsolete() function. This is  #
+#                                  called when the PurgeObsolete option (-p) is specified.       #
+# 07/17/2015 2.00 Randy Johnson    Updated for Python 2.4-3.4 compatibility. Added prompts for   #
+#                                  username, password, tnsname.                                  #
+# 07/13/2017 2.01 Randy Johnson    Added program description to Usage.                           #
+#                                                                                                #
+# Todo's                                                                                         #
+#                                                                                                #
+#                                                                                                #
+##################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+from datetime               import datetime
+from optparse               import OptionParser
+from os                     import environ
+from os.path                import basename
+from sys                    import argv
+from sys                    import exit
+from sys                    import version_info
+from signal                 import SIGPIPE
+from signal                 import SIG_DFL
+from signal                 import signal
+from Oracle                 import LoadOratab
+from Oracle                 import RunSqlplus
+from Oracle                 import SetOracleEnv
+from Oracle                 import ParseConnectString
+
+from base64                 import b64decode
+from datetime               import datetime
+from decimal                import Decimal
+from email                  import Encoders
+from email.MIMEMultipart    import MIMEMultipart
+from email.MIMENonMultipart import MIMENonMultipart
+from email.MIMEBase         import MIMEBase
+from email.MIMEText         import MIMEText
+from email.Utils            import COMMASPACE
+from email.Utils            import formatdate
+from getpass                import getuser
+
+from os                     import statvfs
+from re                     import match
+from re                     import search
+from socket                 import gethostname
+from subprocess             import Popen
+from subprocess             import PIPE
+from subprocess             import STDOUT
+from sys                    import argv
+from sys                    import exc_info
+
+
+# --------------------------------------
+# ---- Function Definitions ------------
+# --------------------------------------
+
+# Def  : SendReport()
+# Desc : Creates a multi-part MIME message.
+# Args : AddressList, Report, MsgSizeLimit
+# Retn : msg = Message object containing the multi-part MIME email message.
+#---------------------------------------------------------------------------
+def SendReport(AddressList, Report, MsgSizeLimit):
+  hostname       = gethostname()
+  username       = getuser()
+  ReportFilename = 'Stale Backups Report.txt'
+  Subject        = 'Stale Backups Report'
+
+  msg = MIMEMultipart()
+  msg['From']    = username + '@' + hostname
+  msg['To']      = COMMASPACE.join(AddressList)
+  msg['Date']    = formatdate(localtime=True)
+  msg['Subject'] = Subject
+
+  msg.attach( MIMEText(Report) )
+  msgText = msg.as_string()
+
+  part = MIMEBase('application', "octet-stream")
+  part.set_payload(Report)
+  Encoders.encode_base64(part)
+  part.add_header('Content-Disposition', 'attachment; filename="%s"' % (ReportFilename))
+  msg.attach(part)
+
+  if (len(msgText) >= MsgSizeLimit):
+    msgSize      = splitThousands(len(msgText))
+    MsgSizeLimit = splitThousands(MsgSizeLimit)
+    print('\nMessage size', msgSize, 'is larger than email size limit of', MsgSizeLimit)
+    exit(1)
+
+  proc= Popen(['/usr/sbin/sendmail', '-t'], stdin=PIPE, stdout=PIPE, stderr=STDOUT, shell=False, universal_newlines=True, close_fds=True)
+
+  # Write the contents of the mail message to sendmail's stdin and close.
+  proc.stdin.write(msg.as_string())
+  proc.stdin.close()
+
+  # Catch stdout/stderr output.
+  stdOut = proc.stdout.read()
+
+  # Get the return code from sendmail
+  procRC = proc.poll()
+
+  return()
+# End SendReport()
+
+
+# Def  : ReportExceptionsTable()
+# Desc : Prints a report of the full contents of the exceptions table.
+# Args : None
+# Retn :
+#---------------------------------------------------------------------------
+def ReportExceptionsTable(DbId=''):
+
+  Sql  = "SET ECHO OFF"                                                     + "\n"
+  Sql += "SET TIMING OFF"                                                   + "\n"
+  Sql += "SET FEEDBACK OFF"                                                 + "\n"
+  Sql += "SET HEAD OFF"                                                     + "\n"
+  Sql += "ALTER SESSION SET NLS_DATE_FORMAT = 'mm-dd-yyyy HH24:mi:ss';"     + "\n"
+  SqlHeader
+  Sql += " SELECT " + SqlHeader                                             + "\n"
+  Sql += "        DB_NAME           ||'~'||"                                + "\n"
+  Sql += "        DB_UNIQUE_NAME    ||'~'||"                                + "\n"
+  Sql += "        DBID              ||'~'||"                                + "\n"
+  Sql += "        DB_KEY            ||'~'||"                                + "\n"
+  Sql += "        DROP_DATE         ||'~'||"                                + "\n"
+  Sql += "        RETAIN_DAYS"                                              + "\n"
+  Sql += "   FROM MYCO_STALE_BACKUP_EXCP"                                   + "\n"
+  if (DbId != ''):
+    Sql += "  WHERE DBID = " + DbId                                         + "\n"
+  Sql += "  ORDER BY DB_UNIQUE_NAME, DBID;"                                 + "\n"
+
+  # Execute the report
+  if (ConnStr != ''):
+    (Stdout) = RunSqlplus(Sql, ErrChk, ConnStr)
+  else:
+    (Stdout) = RunSqlplus(Sql, ErrChk)
+
+  ReportHead  = ''
+  ReportBody  = ''
+  ReportHead += '%-20s %-20s %-20s %-20s %-20s %-20s\n' % ('Db Name', 'Db Unique Name', 'DbId', 'Db Key', 'Drop Date', 'Days to Retain')
+  ReportHead += '%-20s %-20s %-20s %-20s %-20s %-20s\n' % ('--------------------', '--------------------', '--------------------', '--------------------', '-------------------', '--------------')
+  for line in Stdout.split('\n'):
+    if (line.count('~') == 5):
+      (DbName, DbUniqueName, DbId, DbKey, DropDate, RetainDays) = line.split('~')
+      ReportHead += '%-20s %-20s %-20s %-20s %-20s %-20s\n' % (DbName, DbUniqueName, DbId, DbKey, DropDate, RetainDays)
+  print()
+  print(ReportHead + ReportBody)
+  return(0)
+# End ReportExceptionsTable
+
+
+# Def  : ReportStaleBackups()
+# Desc : Prints a the stale backups report.
+# Args : None
+# Retn : Report
+#---------------------------------------------------------------------------
+def ReportStaleBackups(StaleDays):
+  Sql  = "SET ECHO OFF"                                                             + "\n"
+  Sql += "SET FEEDBACK OFF"                                                         + "\n"
+  Sql += "SET HEAD OFF"                                                             + "\n"
+  Sql += "ALTER SESSION SET NLS_DATE_FORMAT = 'mm-dd-yyyy HH24:mi:ss';"             + "\n"
+  Sql += "SELECT " + SqlHeader                                                      + "\n"
+  Sql += "       db.name                 ||'~'||"                                   + "\n"
+  Sql += "       db.dbid                 ||'~'||"                                   + "\n"
+  Sql += "       MAX(db.db_key)          ||'~'||"                                   + "\n"
+  Sql += "       MAX(a.completion_time)"                                            + "\n"
+  Sql += "  FROM rc_backup_set a,"                                                  + "\n"
+  Sql += "       rc_database   db"                                                  + "\n"
+  Sql += " WHERE db.db_key = a.db_key"                                              + "\n"
+  Sql += "   AND backup_type ='D'"                                                  + "\n"
+  Sql += "   AND a.db_key not in ("                                                 + "\n"
+  Sql += "       SELECT db_key"                                                     + "\n"
+  Sql += "         FROM rc_backup_set"                                              + "\n"
+  Sql += "        WHERE backup_type ='D'"                                           + "\n"
+  Sql += "          AND TRUNC(completion_time) >= TRUNC(SYSDATE-" + StaleDays + ")" + "\n"
+  Sql += "        GROUP BY db_key)"                                                 + "\n"
+  Sql += "   AND (db.dbid, db.db_key) not in("                                      + "\n"
+  Sql += "         SELECT dbid, db_key"                                             + "\n"
+  Sql += "           FROM MYCO_STALE_BACKUP_EXCP)"                                  + "\n"
+  Sql += " GROUP BY DB.NAME, DB.DBID"                                               + "\n"
+  Sql += " ORDER BY MAX(A.COMPLETION_TIME) DESC;"                                   + "\n"
+
+  # Execute the report
+  if (ConnStr != ''):
+    (Stdout) = RunSqlplus(Sql, ErrChk, ConnStr)
+  else:
+    (Stdout) = RunSqlplus(Sql, ErrChk)
+
+  ReportHead = ''
+  ReportBody = ''
+  ReportHead += '%-20s %-20s %-20s %-21s\n' % ('Database Name', 'DbId', 'Db Key', 'Date of Last Full Backup')
+  ReportHead += '%-20s %-20s %-20s %-21s\n' % ('--------------------', '--------------------', '--------------------', '------------------------')
+  for line in Stdout.split('\n'):
+    if (line.count('~') == 3):
+      (Database, DbId, DbKey, LastFullBackupDate) = line.split('~')
+      ReportBody += '%-20s %-20s %-20s %-10s\n' % (Database,DbId,DbKey,LastFullBackupDate)
+
+  Report = ReportHead + ReportBody
+  return(Report)
+# End ReportStaleBackups()
+
+
+# Def  : InsertException()
+# Desc : Prints a the stale backups report.
+# Args : Array (list) of values to insert. Represents 1 row, 1 database.
+# Retn :
+#---------------------------------------------------------------------------
+def InsertException(DbName, DbId, RetainDays=90):
+###! def InsertException(DbName, DbId, DbUniqueName='', RetainDays=90):
+  DbName  = DbName.upper().strip()
+  DbId    = DbId.strip()
+  InsRows = '0'
+  ###! DbUniqueName = DbUniqueName.upper()
+
+  ###! Sql  = "SET ECHO OFF"                                                 + "\n"
+  ###! Sql += "SET FEEDBACK OFF"                                             + "\n"
+  ###! Sql += "SET HEAD OFF"                                                 + "\n"
+  ###! Sql += "ALTER SESSION SET NLS_DATE_FORMAT = 'mm-dd-yyyy HH24:mi:ss';" + "\n"
+  ###! Sql += "SELECT db.name                 ||'~'||"                       + "\n"
+  ###! Sql += "       db.dbid                 ||'~'||"                       + "\n"
+  ###! Sql += "       db.db_key               ||'~'||"                       + "\n"
+  ###! Sql += "       sysdate"                                               + "\n"
+  ###! Sql += "  FROM rc_database db"                                        + "\n"
+  ###! Sql += " WHERE db.dbid = " + DbId + ";"                               + "\n"
+
+  Sql  = "SET ECHO OFF"                                                 + "\n"
+  Sql += "SET FEEDBACK OFF"                                             + "\n"
+  Sql += "SET HEAD OFF"                                                 + "\n"
+  Sql += "ALTER SESSION SET NLS_DATE_FORMAT = 'mm-dd-yyyy HH24:mi:ss';" + "\n"
+  Sql += "SELECT " + SqlHeader                                          + "\n"
+  Sql += "       db.name                  ||'~'||"                      + "\n"
+  Sql += "       site.db_unique_name      ||'~'||"                      + "\n"
+  Sql += "       db.dbid                  ||'~'||"                      + "\n"
+  Sql += "       db.db_key                ||'~'||"                      + "\n"
+  Sql += "       sysdate                  ||'~'||"                      + "\n"
+  Sql += "       site.database_role       ||'~'||"                      + "\n"
+  Sql += "       cf_create_time"                                        + "\n"
+  Sql += "  FROM rc_database db,"                                       + "\n"
+  Sql += "       rc_site     site"                                      + "\n"
+  Sql += " WHERE db.db_key = site.db_key(+)"                            + "\n"
+  Sql += "   AND db.dbid = " + DbId + ";"                               + "\n"
+
+  # Execute the report
+  if (ConnStr != ''):
+    (Stdout) = RunSqlplus(Sql, ErrChk, ConnStr)
+  else:
+    (Stdout) = RunSqlplus(Sql, ErrChk)
+
+  if (Stdout.count('~') == 6):
+    (db_name,db_unique_name,dbid,db_key,drop_date,database_role,cf_create_time) = Stdout.split('~')
+  else:
+    print('\nDBID not found in recovery catalog:', DbId)
+    exit(1)
+
+  if (DbName != db_name):
+    print('\nError: Missmatch between db_name found in the recovery catalog and db_name given.')
+    print('\n DBID          :', dbid)
+    print(' db_name given :', DbName)
+    print(' db_name found :', db_name)
+    exit(1)
+
+  if (db_name != '' and dbid != '' and db_key != '' and drop_date != ''):
+    Sql  = "SET ECHO OFF"                                                 + "\n"
+    Sql  = "SET FEEDBACK OFF"                                             + "\n"
+    Sql += "SET HEAD OFF"                                                 + "\n"
+    Sql += "ALTER SESSION SET NLS_DATE_FORMAT = 'mm-dd-yyyy HH24:mi:ss';" + "\n"
+    Sql += "SET FEEDBACK ON"                                              + "\n"
+    Sql += "INSERT INTO MYCO_STALE_BACKUP_EXCP("                          + "\n"
+    Sql += "  db_name,"                                                   + "\n"
+    Sql += "  db_unique_name,"                                            + "\n"
+    Sql += "  dbid,"                                                      + "\n"
+    Sql += "  db_key,"                                                    + "\n"
+    Sql += "  drop_date,"                                                 + "\n"
+    Sql += "  retain_days"                                                + "\n"
+    Sql += ") VALUES ("                                                   + "\n"
+    Sql += "  '" + db_name        + "',"                                  + "\n";
+    Sql += "  '" + db_unique_name + "',"                                  + "\n";
+    Sql += "  "  + dbid           + ","                                   + "\n";
+    Sql += "  "  + db_key         + ","                                   + "\n";
+    Sql += "  '" + drop_date      + "',"                                  + "\n";
+    Sql += "  " + str(RetainDays)                                         + "\n";
+    Sql += ");"
+
+    ###~ print 'db_name         = ', db_name
+    ###~ print 'db_unique_name  = ', db_unique_name
+    ###~ print 'dbid            = ', dbid
+    ###~ print 'db_key          = ', db_key
+    ###~ print 'drop_date       = ', drop_date
+    ###~ print 'database_role   = ', database_role
+    ###~ print 'cf_create_time  = ', cf_create_time
+
+    # Execute the report
+    if (ConnStr != ''):
+      (Stdout) = RunSqlplus(Sql, ErrChk, ConnStr)
+    else:
+      (Stdout) = RunSqlplus(Sql, ErrChk)
+  
+
+    # Check Sqlplus output for the expected '1 row created.'
+    for line in Stdout.split('\n'):
+      matchObj = search('[0-9]+' + ' row created.', line)
+      matchObj = match('[0-9]+' + ' row created.', line)
+      if (matchObj):
+        InsRows = matchObj.group().split()[0]
+
+  if (int(InsRows) == 1):
+    print('\nRow successfully inserted into exception table.\n')
+    print(' DbName         :', db_name)
+    print(' DbUniqueName   :', db_unique_name)
+    print(' DbId           :', dbid)
+    print(' Db_Key         :', db_key)
+    print(' Drop Date      :', drop_date)
+    print(' Days to Ratain :', str(RetainDays))
+    return(0)
+  elif (int(InsRows) > 1):
+    print('\nError: Unexpected number of rows inserted into exception table.')
+    exit(1)
+  elif (int(InsRows) == 0):
+    print('\nError: Insert failed. See insert statement and sql output below for reason.')
+    print(Sql)
+    print('--------')
+    print(Stdout)
+    print('--------')
+    exit(1)
+
+  return(0)
+# End InsertException()
+
+
+# Def  : DeleteException()
+# Desc : Deletes an exception from the MYCO_STALE_BACKUP_EXCP table.
+# Args : Array (list) of primary key values. Represents 1 row, 1 database.
+# Retn :
+#---------------------------------------------------------------------------
+def DeleteException(DbId):
+
+  ReportExceptionsTable(DbId)
+
+  Sql  = "DELETE MYCO_STALE_BACKUP_EXCP\n"
+  Sql += " WHERE dbid = " + DbId + ";\n\n"
+  Sql += "COMMIT;\n"
+
+  # Execute the report
+  if (ConnStr != ''):
+    (Stdout) = RunSqlplus(Sql, ErrChk, ConnStr)
+  else:
+    (Stdout) = RunSqlplus(Sql, ErrChk)
+
+  DelRows = Stdout.split()[0]
+  print('Stdout:',Stdout)
+  print('Stdout[0]:',Stdout.split()[0])
+  exit()
+  print('Rows deleted: ' + DelRows)
+
+  return(0)
+# End DeleteException()
+
+
+# Def  : PurgeObsolete()
+# Desc : Deletes all exceptions that are past their retention period.
+# Args : none
+# Retn : DelRows (rows purged).
+#---------------------------------------------------------------------------
+def PurgeObsolete():
+  DelRows      = '0'
+
+  Sql  = "SET ECHO OFF"                                                 + "\n"
+  Sql += "SET FEEDBACK OFF"                                             + "\n"
+  Sql += "SET HEAD OFF"                                                 + "\n"
+  Sql += "ALTER SESSION SET NLS_DATE_FORMAT = 'mm-dd-yyyy HH24:mi:ss';" + "\n"
+  Sql += "SELECT " + SqlHeader                                          + "\n"
+  Sql += "       db_name        ||'~'||"                                + "\n"
+  Sql += "       db_unique_name ||'~'||"                                + "\n"
+  Sql += "       dbid           ||'~'||"                                + "\n"
+  Sql += "       db_key         ||'~'||"                                + "\n"
+  Sql += "       drop_date      ||'~'||"                                + "\n"
+  Sql += "       retain_days    ||'~'||"                                + "\n"
+  Sql += "       ceil((drop_date + retain_days)-sysdate) days_left"     + "\n";
+  Sql += "  FROM MYCO_STALE_BACKUP_EXCP"                                + "\n";
+  Sql += " WHERE ceil((drop_date + retain_days)-sysdate) <= 0"          + "\n";
+  Sql += " ORDER BY ceil(((drop_date + retain_days)-sysdate));"         + "\n";
+
+  # Execute the report
+  if (ConnStr != ''):
+    (Stdout) = RunSqlplus(Sql, ErrChk, ConnStr)
+  else:
+    (Stdout) = RunSqlplus(Sql, ErrChk)
+
+  if (Stdout.count('~') >= 6):  # if at least 1 row returned...
+    print('\nThe following databases are beyond their retention date and will be purged.\n')
+    print('%-20s %-20s %-10s %-10s %-20s %-11s %-9s' % ('Db Name', 'Db Unique Name', 'Db ID', 'Db Key', 'Drop Date', 'Retain Days', 'Days Left'))
+    print('%-20s %-20s %-10s %-10s %-20s %-11s %-9s' % ('--------------------', '--------------------', '----------','----------','--------------------','-----------','---------'))
+
+    for line in Stdout.split('\n'):
+      if (line.count('~') == 6):
+        (db_name,db_unique_name,dbid,db_key,drop_date,retain_days, days_left) = line.split('~')
+        print('%-20s %-20s %-10s %-10s %-20s %11s %9s' % (db_name,db_unique_name,dbid,db_key,drop_date,retain_days, days_left))
+
+    Sql  = "SET ECHO OFF"                                                 + "\n"
+    Sql += "SET FEEDBACK OFF"                                             + "\n"
+    Sql += "SET HEAD OFF"                                                 + "\n"
+    Sql += "ALTER SESSION SET NLS_DATE_FORMAT = 'mm-dd-yyyy HH24:mi:ss';" + "\n"
+    Sql += "SET FEEDBACK ON"                                              + "\n"
+    Sql += "DELETE FROM MYCO_STALE_BACKUP_EXCP"                           + "\n"
+    Sql += " WHERE ceil((drop_date + retain_days)-sysdate) <= 0;"         + "\n";
+
+    # Execute the report
+    if (ConnStr != ''):
+      (Stdout) = RunSqlplus(Sql, ErrChk, ConnStr)
+    else:
+      (Stdout) = RunSqlplus(Sql, ErrChk)
+
+    # Check Sqlplus output for the expected 'n rows deleted.'
+    for line in Stdout.split('\n'):
+      matchObj = search('[0-9]+' + ' row* deleted.', line)
+      matchObj = match('[0-9]+' + ' row* deleted.', line)
+      if (matchObj):
+        DelRows = matchObj.group().split()[0]
+  else:
+    print('\nNo databases satisfy purge criteria.')
+
+  print('\nRows deleted: ' + DelRows)
+
+  return(0)
+# End PurgeObsolete()
+
+
+# Def  : UnregisterObsolete()
+# Desc : Unregisters databases from the recovery catalog that are found to 
+#        be obsolete.
+# Args : none
+# Retn : none
+#---------------------------------------------------------------------------
+def UnregisterObsolete():
+
+  Sql  = "SET ECHO OFF"                                                 + "\n"
+  Sql += "SET FEEDBACK OFF"                                             + "\n"
+  Sql += "SET HEAD OFF"                                                 + "\n"
+  Sql += "SET TIMING OFF"                                               + "\n"
+  Sql += "ALTER SESSION SET NLS_DATE_FORMAT = 'mm-dd-yyyy HH24:mi:ss';" + "\n"
+  Sql += "SELECT " + SqlHeader                                          + "\n"
+  Sql += "       db_name        ||'~'||"                                + "\n"
+  Sql += "       db_unique_name ||'~'||"                                + "\n"
+  Sql += "       dbid           ||'~'||"                                + "\n"
+  Sql += "       db_key         ||'~'||"                                + "\n"
+  Sql += "       drop_date      ||'~'||"                                + "\n"
+  Sql += "       retain_days    ||'~'||"                                + "\n"
+  Sql += "       ceil((drop_date + retain_days)-sysdate) days_left"     + "\n";
+  Sql += "  FROM MYCO_STALE_BACKUP_EXCP"                                + "\n";
+  Sql += " WHERE ceil((drop_date + retain_days)-sysdate) <= 0"          + "\n";
+  Sql += " ORDER BY ceil(((drop_date + retain_days)-sysdate));"         + "\n";
+
+  # Execute the report
+  if (ConnStr != ''):
+    (Stdout) = RunSqlplus(Sql, ErrChk, ConnStr)
+  else:
+    (Stdout) = RunSqlplus(Sql, ErrChk)
+
+  if (Stdout.count('~') >= 6):  # if at least 1 row returned...
+    print('\nThe following databases are beyond their retention date and will be purged.\n')
+    print('%-20s %-20s %-10s %-10s %-20s %-11s %-9s' % ('Db Name', 'Db Unique Name', 'Db ID', 'Db Key', 'Drop Date', 'Retain Days', 'Days Left'))
+    print('%-20s %-20s %-10s %-10s %-20s %-11s %-9s' % ('--------------------', '--------------------', '----------','----------','--------------------','-----------','---------'))
+
+    for line in Stdout.split('\n'):
+      if (line.count('~') == 6):
+        (db_name,db_unique_name,dbid,db_key,drop_date,retain_days, days_left) = line.split('~')
+        print('%-20s %-20s %-10s %-10s %-20s %11s %9s' % (db_name,db_unique_name,dbid,db_key,drop_date,retain_days, days_left))
+        
+        # Unregister the database
+        Rcv  = 'SET DBID=' + dbid     + '\n'
+        Rcv += 'UNREGISTER DATABASE NOPROMPT;' + '\n' 
+        RunRman(CatHost, CatPort, CatDb, CatUser, CatPass, Rcv)
+  return(0)
+# End UnregisterObsolete()
+
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  Cmd            = basename(argv[0]).split('.')[0]
+  CmdDesc        = 'Stale Backups'
+  Version        = '2.01'
+  VersionDate    = 'Thu Jul 13 12:15:38 CDT 2017'
+  DevState       = 'Production'
+  Banner         = CmdDesc + ': Release ' + Version + ' '  + DevState + '. Last updated: ' + VersionDate
+  Sql            = ''
+  SqlHeader      = '/***** ' + CmdDesc.upper() + ' *****/'
+  ErrChk         = False
+  InStr          = ''
+  ConnStr        = ''
+
+  OratabFile        = '/etc/oratab'
+  DefaultSid        = 'RANDY'
+  CatHost           = 'mtdlvd-fdnapp02.fdcadsde.psn.nyc'
+  CatDb             = 'RCATDEV'
+  CatPort           = '1521'
+  CatUser           = 'rcat'
+  CatPass           = 'welcome'
+  StaleDays         = '2';
+  Now               = datetime.now()
+  argc              = len(argv)
+  Hostname          = gethostname().split('.')[0]
+  Oratab            = LoadOratab()
+  MsgSizeLimit      = 26214400
+  AddressList       = ['MYCO-OracleSupport@cbre.com']
+  ConnStr           = CatUser + '/' + CatPass + '@' + CatHost + ':' + CatPort + '/' + CatDb
+  
+  Usage  = '\n\n-------------------------------------------------------------------------------'
+  Usage += '\nReports Databases with Stale Backups. That is, databases in need of a fresh'
+  Usage += '\n'
+  Usage += '\n\nDeleting'
+  Usage += '\n----------'
+  Usage += '\nThe -d option is used to delete a database from the exceptions table.'
+  Usage += '\nWhen deleting, all that is required is the dbid.'
+  Usage += '\n\n For example:\n'
+  Usage += '  > ' + Cmd + '-d 2519506222\n'
+  Usage += '\n'
+  Usage += ' Where:  "2519506222" is the dbid\n'
+  Usage += '\nInserting'
+  Usage += '\n---------'
+  Usage += '\nThe -i option is used to insert a new database into the exceptions table.\n'
+  Usage += 'When inserting an expired database into the table the -i option is followed\n'
+  Usage += 'by a comma delimited string containing the database information.\n'
+  Usage += '\n For example:\n'
+  Usage += '  > ' + Cmd + '-i FSPRD,2519506222\n'
+  Usage += '  > ' + Cmd + '-i FSPRD,2519506222,90\n'
+  Usage += '\n'
+  Usage += ' Where:  "FSPRD" is the db_name\n'
+  Usage += '      :  "FSPRDDAL" is the db_unique_name\n'
+  Usage += '      :  "2519506222" is the dbid\n'
+  Usage += '      :  "90" is the number of days to retain this dbid in the recovery catalog.\n'
+
+  # Process command line options
+  # ----------------------------------
+  ArgParser = OptionParser(Usage)
+
+  ArgParser.add_option("-d",  dest='Delete',                                default='',    type=str, help='deletes an exception record')
+  ArgParser.add_option("-i",  dest='Insert',                                default='',    type=str, help='insert a new exception record')
+  ArgParser.add_option("-p",  dest='PurgeObsolete',    action="store_true", default=False,           help='purge exceptions that are beyond their retention date')
+  ArgParser.add_option("-x",  dest='ExceptionsReport', action="store_true", default=False,           help='generate a full report of the exceptions table')
+  ArgParser.add_option("-e",  dest='EmailStaleReport', action="store_true", default=False,           help='email the report output to the distribution list')
+  ArgParser.add_option('--v', dest='ShowVer',          action='store_true', default=False,           help='print version info.')
+
+  # Parse command line arguments
+  Options, args = ArgParser.parse_args()
+
+  Delete           = Options.Delete           
+  Insert           = Options.Insert           
+  PurgeObsolete    = Options.PurgeObsolete    
+  ExceptionsReport = Options.ExceptionsReport 
+  EmailStaleReport = Options.EmailStaleReport 
+  ShowVer          = Options.ShowVer          
+  
+  if (ShowVer):
+    print('\n%s' % Banner)
+    exit()
+    
+  # Check/setup the Oracle environment
+  if (not('ORACLE_SID' in list(environ.keys()))):
+    print('ORACLE_SID is required.')
+    exit(1)
+  else:
+    # Set the ORACLE_HOME just in case it isn't set already.
+    if (not('ORACLE_HOME' in list(environ.keys()))):
+      (OracleSid, OracleHome) = SetOracleEnv(environ['ORACLE_SID'])
+
+  # Parse the connect string if any, prompt for username, password if needed.
+  if (len(args) > 0):
+    InStr = args[0]
+    ConnStr = ParseConnectString(InStr)
+
+  # If printing a full report of the exceptions table.
+  if (Options.ExceptionsReport):
+    ReportExceptionsTable()
+    exit(0)
+
+  # If printing a full report of the exceptions table.
+  if (Options.PurgeObsolete):
+    # Unregister obsolete databases from the recovery catalog.
+    UnregisterObsolete()
+    # Purge exception record from the exceptions table.
+    PurgeObsolete()
+    exit(0)
+
+  # If inserting a new exception into the exceptions table.
+  if (Options.Insert != ''):
+    InsertValues = Options.Insert.split(',')
+    if (len(InsertValues) == 2):
+      (DbName,DbId) = InsertValues
+      InsertException(DbName, DbId)
+    elif (len(InsertValues) == 3):
+      (DbName,DbId,RetainDays) = InsertValues
+      InsertException(DbName, DbId, RetainDays)
+    else:
+      print('Improperly formatted insert values.')
+      print(' ',InsertValues)
+      print('\nInsert values are delimited with ',' (comma character). Valid formats follow:')
+      print('  > stale_backups -i FSPRD,2519506222')
+      print('  > stale_backups -i FSPRD,2519506222,90')
+      print()
+      print('Where:  "FSPRD" is the db_name')
+      print('     :  "2519506222" is the dbid')
+      print('     :  "90" is the number of days to retain this dbid in the recovery catalog.')
+      exit(1)
+    exit(0)
+
+  # If deleting an exception from the exceptions table.
+  if(Options.Delete != ''):
+    DbId = Options.Delete
+    DeleteException(DbId)
+    exit(0)
+
+  # Default action -- no other command line option selected.
+  Report = ReportStaleBackups(StaleDays)
+  Report = 'Databases that have not had a full backup in the past ' + StaleDays + ' days...' + '\n\n' + Report
+  print('\n' + Report)
+
+  # Convert the report to Dos/Windows ('\n' --> '\r\n')
+  Report = Report.replace('\n','\r\n')
+
+  if(Options.EmailStaleReport):
+    ReportLineCount = len(Report.split('\n'))
+    if (ReportLineCount > 5):   # Not an empty report!
+      print('Emailing report.')
+      SendReport(AddressList, Report, MsgSizeLimit)
+  exit(0)
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------
+
+
+### -------------------------------------------------------
+### ---- DDL For Creating The Exceptions Table ------------
+### -------------------------------------------------------
+### CREATE TABLE MYCO_STALE_BACKUP_EXCP
+### (
+###    DB_NAME          VARCHAR2 (30 BYTE),
+###    DB_UNIQUE_NAME   VARCHAR2 (30 BYTE),
+###    DBID             NUMBER,
+###    DB_KEY           NUMBER,
+###    DROP_DATE        DATE,
+###    RETAIN_DAYS      NUMBER (3)
+### )
+### TABLESPACE CATALOG
+### PCTUSED 0
+### PCTFREE 10
+### INITRANS 1
+### MAXTRANS 255
+### STORAGE (INITIAL 10 M
+###          NEXT 10 M
+###          MINEXTENTS 1
+###          MAXEXTENTS UNLIMITED
+###          PCTINCREASE 0
+###          BUFFER_POOL DEFAULT)
+### LOGGING
+### NOCOMPRESS
+### NOCACHE
+### NOPARALLEL
+### MONITORING;
+### 
+### 
+### CREATE INDEX MYCO_STALE_BACKUP_EXCP_IX1
+###    ON MYCO_STALE_BACKUP_EXCP (RETAIN_DAYS)
+###    LOGGING
+###    TABLESPACE CATALOG
+###    PCTFREE 10
+###    INITRANS 2
+###    MAXTRANS 255
+###    STORAGE (INITIAL 10 M
+###             NEXT 10 M
+###             MINEXTENTS 1
+###             MAXEXTENTS UNLIMITED
+###             PCTINCREASE 0
+###             BUFFER_POOL DEFAULT)
+###    NOPARALLEL;
+### 
+### 
+### CREATE UNIQUE INDEX MYCO_STALE_BACKUP_EXCP_PK
+###    ON MYCO_STALE_BACKUP_EXCP (DB_KEY)
+###    LOGGING
+###    TABLESPACE CATALOG
+###    PCTFREE 10
+###    INITRANS 2
+###    MAXTRANS 255
+###    STORAGE (INITIAL 10 M
+###             NEXT 10 M
+###             MINEXTENTS 1
+###             MAXEXTENTS UNLIMITED
+###             PCTINCREASE 0
+###             BUFFER_POOL DEFAULT)
+###    NOPARALLEL;
+### 
+### 
+### CREATE UNIQUE INDEX MYCO_STALE_BACKUP_EXCP_UX1
+###    ON MYCO_STALE_BACKUP_EXCP (DBID)
+###    LOGGING
+###    TABLESPACE CATALOG
+###    PCTFREE 10
+###    INITRANS 2
+###    MAXTRANS 255
+###    STORAGE (INITIAL 10 M
+###             NEXT 10 M
+###             MINEXTENTS 1
+###             MAXEXTENTS UNLIMITED
+###             PCTINCREASE 0
+###             BUFFER_POOL DEFAULT)
+###    NOPARALLEL;
+### 
+### 
+### ALTER TABLE MYCO_STALE_BACKUP_EXCP 
+###  ADD (  PRIMARY KEY (DB_KEY) USING INDEX MYCO_STALE_BACKUP_EXCP_PK);

@@ -1,0 +1,216 @@
+#!/usr/bin/env python
+
+##################################################################################################
+#  Name:        nimble_demo                                                                      #
+#  Author:                                                                                       #
+#  Description: Interactive demonstration of storage allocation using Nimble API                 #
+#                                                                                                #
+# History:                                                                                       #
+#                                                                                                #
+# Date       Ver. Who              Change Description                                            #
+# ---------- ---- ---------------- ------------------------------------------------------------- #
+# 11/21/2018 1.00                  Initial write.                                                #
+##################################################################################################
+
+import sys
+from six.moves           import configparser
+from pprint              import pprint
+from nimbleapi           import nimbleapi
+from timeit              import timeit
+from sys                 import exit, version_info
+
+
+config = configparser.ConfigParser()
+config_file = 'test.env'
+
+try:
+    config.read(config_file)
+except:
+    print("Cannot open configuration file for read: %s" % config_file)
+    exit(1)
+
+nimble_host            = config.get('NIMBLEAPI','NIMBLE_HOST')
+nimble_username        = config.get('NIMBLEAPI','NIMBLE_USERNAME')
+nimble_password        = config.get('NIMBLEAPI','NIMBLE_PASSWORD')
+data_perf_policy       = config.get('NIMBLEAPI','DATA_PERF_POLICY')
+log_perf_policy        = config.get('NIMBLEAPI','LOG_PERF_POLICY')
+data_perf_block_size   = config.get('NIMBLEAPI','DATA_PERF_BLOCK_SIZE')
+log_perf_block_size    = config.get('NIMBLEAPI','LOG_PERF_BLOCK_SIZE')
+data_volume_size       = config.get('NIMBLEAPI','DATA_VOLUME_SIZE')
+log_volume_size        = config.get('NIMBLEAPI','LOG_VOLUME_SIZE')
+data_lun_volume        = config.get('NIMBLEAPI','DATA_LUN_VOL')
+log_lun_volume         = config.get('NIMBLEAPI','LOG_LUN_VOL')
+volume_collection_name = config.get('NIMBLEAPI','VOL_COLLECTION_NAME')
+application_category   = config.get('NIMBLEAPI','APP_CATEGORY')
+
+
+print("##### ---------------------------------------------------------------------------------------------")
+print("##### Configuration: ")
+print("#####   NIMBLE_HOST           = %s" % nimble_host            )
+print("#####   NIMBLE_USERNAME       = %s" % nimble_username        )
+print("#####   DATA_PERF_POLICY      = %s" % data_perf_policy       )
+print("#####   LOG_PERF_POLICY       = %s" % log_perf_policy        )
+print("#####   DATA_PERF_BLOCK_SIZE  = %s" % data_perf_block_size   )
+print("#####   LOG_PERF_BLOCK_SIZE   = %s" % log_perf_block_size    )
+print("#####   DATA_VOLUME_SIZE      = %s" % data_volume_size       )
+print("#####   LOG_VOLUME_SIZE       = %s" % log_volume_size        )
+print("#####   DATA_LUN_VOL          = %s" % data_lun_volume        )
+print("#####   LOG_LUN_VOL           = %s" % log_lun_volume         )
+print("#####   VOL_COLLECTION_NAME   = %s" % volume_collection_name )
+print("#####   APP_CATEGORY          = %s" % application_category   )
+
+if (version_info[0] >= 3):
+  answer = raw_input("\nContinue? (y/N): ")
+else:
+  answer = raw_input("\nContinue? (y/N): ")
+
+# PERFORMANCE POLICY for DATA
+if answer.upper() != 'Y':
+     exit(0)
+
+
+# INITIATE CONNECTION TO NIMBLE ARRAY
+start = timeit()
+print("Initializing nimble object...")
+nimble = nimbleapi(hostname = nimble_host, username = nimble_username, password = nimble_password)
+end = timeit()
+wall = start-end
+print("##### Call time: %f" % wall)
+
+
+
+# TEST READ FUNCTIONS ON ALL DATA FROM THE NIMBLE
+start = timeit()
+print("Initializing nimble object...")
+nimble.access_control_records_read()
+end = timeit()
+wall = start-end
+print("##### Call time: %f" % wall)
+print("##### Access Control Records Retrieved From Nimble:")
+for key in nimble.dict_access_control_records[0]:
+    print("#####    %-3s %30s" % (key, nimble.dict_access_control_records[0][key]))
+
+#nimble.arrays_read()
+#nimble.audit_log_read()
+nimble.initiator_group_read()
+nimble.initiator_read()
+nimble.performance_policies_read()
+#nimble.pools_read()
+###! nimble.protection_schedules_read()
+#nimble.protection_templates_read()
+#nimble.replication_partners_read()
+#nimble.snapshot_collections_read()
+# nimble.snapshots_read() # TAKES A BIT OF TIME DEPENDING ON YOUR VOLUME/SNAPSHOT COUNT
+nimble.volume_collections_read()
+nimble.volume_read()
+
+##################################################################
+
+# CREATE INITIATOR GROUP
+#nimble.initiator_group_create(initiator_group_name = 'AutomationTestGroup-408')
+
+# ADD INITIATORS TO INITIATOR GROUP
+#nimble.initiator_create(initiator_group_name = 'AutomationTestGroup-408', alias = 'a1epc8lhan408_hba1_p1', wwpn = '51:40:2e:c0:11:09:63:58')
+#nimble.initiator_create(initiator_group_name = 'AutomationTestGroup-408', alias = 'a1epc8lhan408_hba1_p2', wwpn = '51:40:2e:c0:11:09:63:5a')
+#nimble.initiator_create(initiator_group_name = 'AutomationTestGroup-408', alias = 'a1epc8lhan408_hba2_p1', wwpn = '51:40:2e:c0:11:09:62:c8')
+#nimble.initiator_create(initiator_group_name = 'AutomationTestGroup-408', alias = 'a1epc8lhan408_hba2_p2', wwpn = '51:40:2e:c0:11:09:62:ca')
+
+# CREATE PERFORMANCE POLICY
+#nimble.performance_policies_create(name = 'DL580-rhev1', description = 'DL580-prrhev01', block_size = 16384, compress = True, cache = True, cache_policy = 'normal', space_policy = 'offline')
+
+
+# CREATE BOOT VOLUME
+#nimble.volume_create(volume_name = 'TestNimbleVolume-boot-automation', volume_size = 102400)
+
+# ADD INITIATOR GROUP AS LUN-ID 0 (BOOT)
+#nimble.access_control_records_create(volume_name = 'TestDLNimbleVolume-boot', initiator_group_name = 'TestNimbleInitiatorGroup', boot_volume = True)
+
+if (version_info[0] >= 3):
+  answer = input("\nDo you want to create a data performance policy? (y/N): ")
+else:
+  answer = raw_input("\nDo you want to create a data performance policy? (y/N): ")
+
+# PERFORMANCE POLICY for DATA
+if answer.upper() == 'Y':
+  ###~ print('name         = %s' % data_perf_policy)
+  ###~ print('description  = %s' % 'Data4k-automation')
+  ###~ print('block_size   = %s' % data_perf_block_size)
+  ###~ print('compress     = %s' % True)
+  ###~ print('cache        = %s' % True)
+  ###~ print('cache_policy = %s' % 'normal')
+  ###~ print('space_policy = %s' % 'offline')
+  ###~ print('app_category = %s' % application_category)
+  nimble.performance_policies_create(name = data_perf_policy, description = 'Data4k-automation', block_size = data_perf_block_size, compress = True, cache = True, cache_policy = 'normal', space_policy = 'offline', app_category = application_category)
+else:
+    print ('Not creating data performance policy\n')
+
+if (version_info[0] >= 3):
+     answer = input("\nDo you want to create a log performance policy? (y/N): ")
+else:
+     answer = raw_input("\nDo you want to create a log performance policy? (y/N): ")
+
+# PERFORMANCE POLICY for Log
+if answer.upper() == 'Y':
+    nimble.performance_policies_create(name = log_perf_policy, description = 'Log32k-automation', block_size = log_perf_block_size, compress = True, cache = True, cache_policy = 'normal', space_policy = 'offline', app_category = application_category)
+else:
+    print ('Not creating log performance policy')
+
+answer = raw_input("\nDo you want to create a data Volume? (y/N): ")
+# This is Data LUN (2 TB)
+if answer.upper() == 'Y':
+    nimble.volume_create(volume_name = data_lun_volume, volume_size = data_volume_size, performance_policy_name = data_perf_policy)
+else:
+    print ('Not creating data Volume')
+
+answer = raw_input("\nDo you want to create a log Volume? (y/N): ")
+
+# This is Log LUN (1 TB)
+if answer.upper() == 'Y':
+    nimble.volume_create(volume_name = log_lun_volume, volume_size = log_volume_size, performance_policy_name = log_perf_policy)
+else:
+    print ('Not creating log Volume')
+
+answer = raw_input("\nDo you want to add initiator group for data Volume? (y/N): ")
+
+# ADD INITIATOR GROUP; LUN-ID IS AUTO INCREMENTED STARTING AT 1
+if answer.upper() == 'Y':
+    nimble.access_control_records_create(volume_name = data_lun_volume, initiator_group_name = 'a1epc8lhan408')
+else:
+    print ('Not creating initiator group for data Volume')
+
+answer = raw_input("\nDo you want to add initiator group for log Volume? (y/N): ")
+
+# ADD INITIATOR GROUP; LUN-ID IS AUTO INCREMENTED STARTING AT 1
+if answer.upper() == 'Y':
+    nimble.access_control_records_create(volume_name = log_lun_volume, initiator_group_name = 'a1epc8lhan408')
+else:
+    print ('Not creating initiator group for log Volume')
+
+answer = raw_input("\nDo you want to create a volume collection? (y/N): ")
+
+# CREATE VOLUME COLLECTION
+if answer.upper() == 'Y':
+    new_volume_collection_id = nimble.volume_collections_create(name = volume_collection_name, description = 'automation generated volume collection')
+else:
+    print ('Not creating initiator group for log Volume')
+
+# ADD OUR DATASTORE VOLUME TO THE DATA VOLUME COLLECTION
+nimble.volume_update(data_lun_volume, volcoll_id = new_volume_collection_id)
+
+# ADD OUR DATASTORE VOLUME TO THE LOG VOLUME COLLECTION
+
+nimble.volume_update(log_lun_volume, volcoll_id = new_volume_collection_id)
+
+# SETUP HOURLY REPLICATION OF THE DATASTORE
+nimble.protection_schedules_create(name = '4-hourly-replication-automation', description = '4-hourly-replication-automation', volcoll_or_prottmpl_id = new_volume_collection_id, period = 4, period_unit = 'hours', num_retain = 42)
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,15 @@
+#!/bin/bash
+
+sqlplus -s /nolog <<-EOF
+  connect / as sysdba
+  set lines 200
+  set feedback off
+  set echo off
+  SELECT inst_id, username, sid, serial#, module, terminal 
+    FROM gv\$session 
+   WHERE username is not null and username not in ('SYS','SYSTEM','DBSNMP') 
+   ORDER BY 1,5;
+  set echo on
+  set feedback on 
+EOF
+

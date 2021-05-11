@@ -1,0 +1,127 @@
+#!/usr/bin/perl
+
+#################################################################################################
+#                                                                                               #
+#  Name:        fmodfix.pl                                                                      #
+#  Author:      Randy Johnson                                                                   #
+#  Description: This program compares file attributes                                           #
+#  Input Params: -c chmod target files where permissions are different than the source file     #
+#                -s source directory                                                            #
+#                -t target directory                                                            #
+#                -help prints usage                                                             #
+#                                                                                               #
+#################################################################################################
+#                                                                                               #
+# MODIFICATION HISTORY:                                                                         #
+#                                                                                               #
+# Chg Date   Chg  By               Chg Description                                              #
+# ---------- ---- ---------------- -----------------------------------------------------------  #
+# 11/22/2005 1.0  Randy Johnson    Created program                                              #
+#                                                                                               #
+#                                                                                               #
+#################################################################################################
+
+
+# Import Modules/Functions
+#--------------------------#
+use File::Basename;
+use Getopt::Long;
+#use Data::Dumper;
+use File::Find;
+use vars qw/*name *dir *prune/;
+*name   = *File::Find::name;
+
+sub wanted;
+
+# -------------------------------------------#
+#  Main Program                              #
+# -------------------------------------------#
+
+# Process command line options
+# --------------------------------
+$Usage  = "\nUsage: $basename [-c {change_permissions_on_target} -s SOURCE_DIR] [-t TARGET_DIR] [help]\n\n";
+
+GetOptions ( 'c'  => \$ChangePerm,
+             's:s'  => \$SourceDir,
+             't:s'  => \$TargetDir,
+             'help' => \$help);
+
+if ($help) {
+   print $Usage;
+   exit;
+}
+
+if (not $SourceDir) {
+   print $Usage;
+   exit;
+}
+
+if (not $TargetDir) {
+   print $Usage;
+   exit;
+}
+
+# Traverse desired source directories and generate a target file list
+# ----------------------------------------------------------------------
+$SourceDirLen = length($SourceDir);
+undef @FileList;
+File::Find::find({wanted => \&wanted}, $SourceDir);
+@SourceFileList = @FileList;
+
+# Traverse desired target directory and generate a target file list
+# ----------------------------------------------------------------------
+$TargetDirLen = length($TargetDir);
+undef @FileList;
+File::Find::find({wanted => \&wanted}, $TargetDir);
+@TargetFileList = @FileList;
+
+foreach my $SourceRef (@SourceFileList) {
+   $SourceFileName = substr($$SourceRef[0], $SourceDirLen, length($$SourceRef[0]));
+   ###~ print "$SourceFileName = ", $SourceFileName, "\n";
+   ###~ print '$$SourceRef[0] = ', $$SourceRef[0], "\n";
+   if ( $SourceFileName ne '' ) {
+      foreach my $TargetRef (@TargetFileList) {
+         $TargetFileName = substr($$TargetRef[0], $TargetDirLen, length($$TargetRef[0]));
+         if ( $TargetFileName ne '' ) {
+            if ($SourceFileName eq $TargetFileName) {
+               ###~ print "\nSource File Mode is: $$SourceRef[3]\n";
+               ###~ print "Target File Mode is: $$TargetRef[3]\n";
+               if ($$TargetRef[3] != $$SourceRef[3]) {
+                  ###~ printf "\nFile Mode Missmatch: %-60s SMode = %-5s TMode = %-5s\n", $$SourceRef[0], $$SourceRef[3], $$TargetRef[3];
+                  printf "$$SourceRef[0]\n";
+                  $Mismatch = 1;
+                  if ($ChangePerm) {
+                     print "\nChanging permissions on $$TargetRef[0] to $$SourceRef[3]\n";
+                     chmod $$SourceRef[3], $$TargetRef[0];
+                  }
+               }
+            }
+         }
+      }
+   }
+}
+if ( not $Mismatch ) { print "\nNo mismatches found.\n" }
+
+sub wanted {
+   print "." if (-d $_);
+   #print "." if (-f $_);
+   $BaseFileName = $_;
+   ( $dev, $ino, $mode, $nlink, $uid, $gid, $rdev, $size, $atime, $mtime, $ctime, $blksize, $blocks ) = stat($BaseFileName);
+   push @FileList, [$name, $dev, $ino, $mode, $nlink, $uid, $gid, $rdev, $size, $atime, $mtime, $ctime, $blksize, $blocks]
+   ###~ print "\n\$name     [0] = $name\n";
+   ###~ print "\$dev        [1] = $dev     \n";
+   ###~ print "\$ino        [2] = $ino     \n";
+   ###~ print "\$mode       [3] = $mode    \n";
+   ###~ print "\$nlink      [4] = $nlink   \n";
+   ###~ print "\$uid        [5] = $uid     \n";
+   ###~ print "\$gid        [6] = $gid     \n";
+   ###~ print "\$rdev       [7] = $rdev    \n";
+   ###~ print "\$size       [8] = $size    \n";
+   ###~ print "\$atime      [9] = $atime   \n";
+   ###~ print "\$mtime     [10] = $mtime   \n";
+   ###~ print "\$ctime     [11] = $ctime   \n";
+   ###~ print "\$blksize   [12] = $blksize \n";
+   ###~ print "\$blocks    [13] = $blocks  \n";
+}
+
+

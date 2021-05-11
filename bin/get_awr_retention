@@ -1,0 +1,29 @@
+#!/bin/bash
+
+ps -ef | grep pmon | grep -v grep | grep -v perl | grep -v ASM |\
+while read PMON; do
+   INST=`echo "$PMON" | awk {' print $8 '} | cut -f3 -d_`
+  echo "instance: $INST"
+
+  export ORACLE_SID=$INST
+  export ORAENV_ASK=NO
+  . oraenv
+
+
+  sqlplus -s /nolog <<-EOF
+  connect / as sysdba
+
+set lines 300
+select DBID,
+   ((TRUNC(SYSDATE) + SNAP_INTERVAL - TRUNC(SYSDATE)) * 86400)/60 AS SNAP_INTERVAL_MINS,
+   ((TRUNC(SYSDATE) + RETENTION - TRUNC(SYSDATE)) * 86400)/60 AS RETENTION_MINS,
+   ((TRUNC(SYSDATE) + RETENTION - TRUNC(SYSDATE)) * 86400)/60/60/24 AS RETENTION_DAYS,
+   TOPNSQL
+from dba_hist_wr_control
+where dbid in (select dbid from v\$database);
+
+EOF
+echo '-----'
+echo
+echo
+done

@@ -1,0 +1,20 @@
+#!/bin/bash
+
+  sqlplus -s /nolog <<-EOF
+  connect / as sysdba
+  set trimspool on
+
+  set pages 0
+  set echo off
+  set feedback off
+  set lines 155
+  col name for a20
+  col value for a50
+
+  select '$ORACLE_SID' from dual;
+  select '------------------' from dual;
+
+  set pages 1000
+  select * from nls_database_parameters order by 1;
+
+EOF

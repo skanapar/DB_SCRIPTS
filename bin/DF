@@ -1,0 +1,44 @@
+#!/usr/bin/perl
+
+sub numerals {
+   local($_) = @_;
+   1 while s/(.*\d)(\d\d\d)/$1,$2/;
+   $_;
+}
+
+sub numerically { $a <=> $b; }
+
+select(STDOUT); $| = 1;
+
+open(INPUT, "/bin/df -k |") || die;
+
+FILE: while(<INPUT>){
+   chomp($_);
+   ++$Count;
+   
+   @Line = split(/\s+/, $_);
+   
+   $kbytes = &numerals($Line[1]);
+   $used   = &numerals($Line[2]);
+   $avail  = &numerals($Line[3]);
+   
+   $f_len = length($Line[0]) if length($Line[0]) > $f_len;
+   $k_len = length($kbytes)  if length($kbytes)  > $k_len;
+   $u_len = length($used)    if length($used)    > $u_len;
+   $a_len = length($avail)   if length($avail)   > $a_len;
+   $c_len = length($Line[4]) if length($Line[4]) > $c_len;
+   $m_len = length($Line[5]) if length($Line[5]) > $m_len;
+   
+   $Key="$Line[0]|$kbytes|$used|$avail|$Line[4]|$Line[5]";
+   $Buffer{$Count} = $Key;
+}
+
+close(INPUT);
+
+foreach $KEY (sort numerically keys %Buffer){
+   @Line = split(/\|/, $Buffer{$KEY});
+   printf("%-${f_len}s %${k_len}s %${u_len}s %${a_len}s %${c_len}s %-${m_len}s\n", @Line);
+}
+
+
+

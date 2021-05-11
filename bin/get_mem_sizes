@@ -1,0 +1,37 @@
+#!/bin/bash
+
+  sqlplus -s /nolog <<-EOF
+  connect / as sysdba
+  set head off
+  set tab off
+  set trimspool on
+
+  set pages 0
+  set echo off
+  set feedback off
+  set lines 155
+  col name for a20
+  col value for a20
+
+  select '$ORACLE_SID' from dual;
+  select '------------------' from dual;
+
+  select name, value
+    from ( select name, value
+             from ( select i.ksppinm    name,
+                           sv.ksppstvl  value
+                      from sys.x\$ksppi i,
+                           sys.x\$ksppsv sv
+                     where i.indx = sv.indx ))
+   where name in ('pga_aggregate_target',
+                  'shared_pool_size',
+                  'db_cache_size',
+                  'java_pool_size',
+                  'large_pool_size',
+                  'sga_target',
+                  'sga_max_size',
+                  'memory_max_target',
+                  'memory_target')
+  order by name;
+
+EOF

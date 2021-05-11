@@ -1,0 +1,1 @@
+exec DBMS_SERVICE.DELETE_SERVICE('&svc');

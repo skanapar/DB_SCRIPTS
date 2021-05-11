@@ -1,0 +1,265 @@
+#!/bin/env python
+
+##################################################################################################
+# Name:        download_cellmetrics                                                              #
+# Author:      Randy Johnson                                                                     #
+# Description: Downloads metrichistory files from Exadata storage cells. Files that have already #
+#              been downloaded (appear the local repository) are skipped. The most recent file   #
+#              found on the storage cell is not downloaded. This is to prevent downloading an    #
+#              incomplete file (a file that is being written to).                                #
+#                                                                                                #
+# History:                                                                                       #
+#                                                                                                #
+# Date       Ver. Who              Change Description                                            #
+# ---------- ---- ---------------- ------------------------------------------------------------- #
+# 09/0302015 1.00 Randy Johnson    Initial write.                                                #
+#                                                                                                #
+# Todo's                                                                                         #
+#  - None at this time.                                                                          #
+#                                                                                                #
+# Wish List:                                                                                     #
+#  - None at this time.                                                                          #
+##################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+from datetime     import datetime
+from getpass      import getuser
+from getpass      import getpass
+from grp          import getgrnam
+from optparse     import OptionParser
+from os           import walk
+from os           import mkdir
+from os.path      import basename
+from os.path      import isdir
+from os.path      import isfile
+from os.path      import join as pathjoin
+from pwd          import getpwnam
+from signal       import SIG_DFL
+from signal       import SIGPIPE
+from signal       import signal
+from subprocess   import PIPE
+from subprocess   import Popen
+from subprocess   import STDOUT
+from sys          import argv
+from sys          import exit
+from sys          import path
+from sys          import version_info
+
+
+# For handling termination in stdout pipe.
+signal(SIGPIPE, SIG_DFL)
+
+# --------------------------------------
+# ---- Function & Class Definitions ----
+# --------------------------------------
+
+# Def : ChownDir($$$$)
+# Desc: Executes the chown user:group command on the repository directories.
+# Args: Directory = directory to chown
+#       NewOwner  = new owner for the directory
+#       NewGroup  = new group for the directory
+# Retn: OS returncode for chown command
+#       stdout + stderr
+#---------------------------------------------------------------------------
+def ChownDir(Directory, NewOwner, NewGroup):
+
+  # Recursive chown...
+  ChownCmd = Sudo + [Chown, '-R', NewOwner + ':' +  NewGroup, Directory]
+
+  try:
+    proc = Popen(ChownCmd, stdin=PIPE, stdout=PIPE, stderr=STDOUT, shell=False, universal_newlines=True, close_fds=True)
+  except:
+    print("Failure in call to chown/sudo chown: %s" % ChownCmd)
+    return(1,'')
+
+  if(UseSudo):
+    (Stdout,Stderr) = proc.communicate(SudoPasswd + '\n')
+
+  rc = proc.returncode
+  Stdout = Stdout.strip()
+  return(proc.returncode, Stdout)
+# End ChownDir
+#---------------------------------------------------------------------------
+
+
+# --------------------------------------
+# ---- End Function Definitions --------
+# --------------------------------------
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  Cmd           = basename(argv[0]).split('.')[0]
+  CmdDesc       = 'Download Cell Metrics'
+  Version       = '1.00'
+  VersionDate   = 'Thu Sep  3 13:09:57 CDT 2015'
+  DevState      = 'Production'
+  Banner        = CmdDesc + ': Release ' + Version + ' '  + DevState + '. Last updated: ' + VersionDate
+  HomeDir       = path[0]
+  HomeOwner     = 'oracle'
+  HomeGroup     = 'dba'
+  #CellList      = ['enkcel01','enkcel02','enkcel03']
+  CellList      = ['enkx3cel01.enkitec.com','enkx3cel02.enkitec.com','enkx3cel03.enkitec.com']
+  #CellList      = ['enkx4cel01','enkx4cel02','enkx4cel03']
+  HistDir       = '/opt/oracle/cell/cellsrv/deploy/config/metrics'
+  FilePrefix    = 'metrics_'
+  FilePostfix   = '.gz'
+  Scp           = ['/usr/bin/scp',  '-p']
+  Ssh           = ['/usr/bin/ssh', '-q', '-t', '-T']
+  Sudo          = ['/usr/bin/sudo', '-S', '-k']
+  Chown         = '/bin/chown'
+  Ls            = '/bin/ls -1 '
+  SshUser       = 'root'
+  CurrUser      = getuser()
+
+  # Process command line options
+  # ----------------------------------
+  ArgParser = OptionParser()
+  ArgParser.add_option('-s',  dest='UseSudo', action='store_true', default=False, help="scp using sudo.")
+  ArgParser.add_option('--v', dest='ShowVer', action='store_true', default=False, help="print version info.")
+
+  Options, args = ArgParser.parse_args()
+
+  UseSudo = Options.UseSudo
+  ShowVer = Options.ShowVer
+
+  if (ShowVer == True):
+    print('\n%s' % Banner)
+    exit()
+
+  if(not isfile(Scp[0])):
+    print("\nscp command not found at: %s" % Scp[0])
+    exit(1)
+  
+  if(not isfile(Ssh[0])):
+    print("\nssh command not found at: %s" % Ssh[0])
+    exit(1)
+
+  if(not isfile(Sudo[0])):
+    print("\nsudo command not found at: %s" % Sudo[0])
+    exit(1)
+
+  if(not isfile(Chown)):
+    print("\nchown command not found at: %s" % Chown)
+    exit(1)
+
+  if(not isfile(Ls.split()[0])):
+    print("\nls command not found at: %s" % Ls.split()[0])
+    exit(1)
+ 
+  # Capture user password for sudo authentication.
+  if(UseSudo):
+    SudoPasswd = getpass('\n[sudo] password for ' + CurrUser + ': ')
+
+  # Create local repository directories if they don't exist.
+  for Cell in CellList:
+    pth = pathjoin(HomeDir, Cell)
+    if(not isdir(pth)):
+      try:
+          mkdir(pth)
+      except:
+        print("Cannot create directory: %s" % pth)
+        exit()
+    if (UseSudo):
+      ChownDir(pth, HomeOwner, HomeGroup)
+
+  Now = datetime.now()
+  print('\n==================================================================================================================')
+  print('%s: Release %s Development %66s' % (CmdDesc, Version, Now.strftime("%Y-%m-%d %H:%M")))
+  print('==================================================================================================================')
+  print("Exadata Storage Cells     : %s" % ', '.join(CellList))
+  print("Metrics History Directory : %s " % HistDir)
+  print("Metrics History File Mask : %s%s%s " % (FilePrefix,'*',FilePostfix))
+  print("Home Directory            : %s" % HomeDir)
+  print("Home Owner                : %s" % HomeOwner)
+  print("Home Group                : %s" % HomeGroup)
+  print("")
+
+  # Pull a directory listing of HistDir
+  for Cell in CellList:
+    if (UseSudo):
+      SshCmd = Sudo + Ssh + [Cell]
+    else:
+      SshCmd = Ssh + [SshUser + '@' + Cell]
+
+    proc = Popen(SshCmd, stdin=PIPE, stdout=PIPE, stderr=STDOUT, shell=False, universal_newlines=True, close_fds=True)
+
+    if(UseSudo):
+      proc.stdin.write(SudoPasswd + '\n')
+
+    proc.stdin.write(Ls + HistDir + '/' + FilePrefix + '*' + FilePostfix + '\n')
+    (Stdout, Stderr) = proc.communicate()
+    rc = proc.returncode
+    Stdout = Stdout.strip()
+
+    if(rc != 0):
+      print("\nSsh return code: %s, Stdout: %s" % (rc, Stdout))
+
+    # [:-1] remove the newest file from the list to circumvent
+    # downloading an incomplete file.
+    SourceList = Stdout.split('\n')[:-1]
+
+    # Remove previously downloaded files from the transfer list.
+    DownloadList = []
+    for metfile in SourceList:
+      # Remove "[sudo] password for oracle: " from the string.
+      # For some reason the sudo password promt bleeds through.
+      # Assuming it is left in the stdout buffer from initial ssh login.
+      if("[sudo] password for" in metfile):
+        metfile = metfile.split(':')[1].strip()
+
+      for (path, dirs, files) in walk(pathjoin(HomeDir, Cell)):
+        # Only add new files to the download list...
+        if(basename(metfile) not in files):
+          DownloadList.append(metfile)
+
+    # Report a count of the files to be downloaded.
+    NewFileCount = len(DownloadList)
+    if(NewFileCount > 0):
+      print("Downloading %s new files from %s..." % (NewFileCount,Cell))
+    else:
+      print("No new files on %s." % Cell)
+
+    # Download new metric files...
+    for metfile in DownloadList:
+      LocalMetfilename = pathjoin(HomeDir,Cell)
+
+      if (UseSudo):
+        ScpCmd = Sudo + Scp + [Cell + ':' + metfile, LocalMetfilename]
+      else:
+        ScpCmd = Scp + [ SshUser + '@' + Cell + ':' + metfile, LocalMetfilename]
+
+      print("  %s" % metfile)
+
+      proc = Popen(ScpCmd, stdin=PIPE, stdout=PIPE, stderr=STDOUT, shell=False, universal_newlines=True, close_fds=True)
+
+      if(UseSudo):
+        (Stdout,Stderr) = proc.communicate(SudoPasswd + '\n')
+
+      rc = proc.returncode
+      Sdtout = Stdout.strip()
+
+      if(rc != 0):
+        print("Scp return code: %s, Stdout: %s" % (rc, Stdout))
+
+    print("")
+
+  if(UseSudo):
+    print("Changing ownership of repository to %s:%s ..." % (HomeOwner, HomeGroup))
+    for Cell in CellList:
+      pth = pathjoin(HomeDir, Cell)
+      print("  %s" % pth)
+      ChownDir(pth, HomeOwner, HomeGroup)
+
+  Now = datetime.now()
+  print('==================================================================================================================')
+  print('End of Report %100s' % (Now.strftime("%Y-%m-%d %H:%M")))
+  print('==================================================================================================================')
+
+  exit(0)
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------

@@ -1,0 +1,21 @@
+#!/bin/env python
+
+from subprocess   import PIPE
+from subprocess   import Popen
+from subprocess   import STDOUT
+from signal       import signal, SIGPIPE, SIG_DFL
+
+signal(SIGPIPE,SIG_DFL) 
+
+proc = Popen(['/home/oracle/dba/bin/stdin'], stdin=PIPE, stdout=PIPE, stderr=STDOUT)
+
+print('<<< %s' % proc.stdout.readline())
+
+for i in range(10):                      # repeat several times to show that it works
+    print >> proc.stdin, i               # write input
+    proc.stdin.flush()                   # not necessary in this case
+    print('<<< %s' % proc.stdout.readline())        # read output
+
+print proc.communicate()[0],             # signal the child to exit,
+                                         # read the rest of the output, 
+                                         # wait for the child to exit

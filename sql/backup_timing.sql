@@ -1,0 +1,7 @@
+select DB_NAME, START_DATE, TO_CHAR(START_DATE, 'DAY'), ROUND((END_DATE-START_DATE)*24) 
+ from monitor.backup_log_HISTORY 
+where db_name like 'USRPRD' 
+AND BACKUP_TYPE='FULL' 
+AND STATUS = 'SUCCESSFUL' 
+AND END_DATE>SYSDATE-30
+order by 2,1

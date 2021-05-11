@@ -1,0 +1,139 @@
+#!/bin/env python
+
+##################################################################################################################
+#  Name:        fixnames                                                                                         #
+#  Author:      Randy Johnson                                                                                    #
+#  Description: Changes the '_' to ' ' in file names.                                                            #
+#                                                                                                                #
+# History:                                                                                                       #
+#                                                                                                                #
+# Date       Ver. Who              Change Description                                                            #
+# ---------- ---- ---------------- ----------------------------------------------------------------------------- #
+# 01/10/2019 1.00 Randy Johnson    Initial release.                                                              #
+##################################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+from optparse   import OptionParser
+from os         import rename as renamefile
+from os         import stat
+from os         import walk
+from os.path    import basename, abspath, dirname
+from os.path    import join as pathjoin
+from os.path    import isfile
+from sys        import argv
+from sys        import exit
+
+# --------------------------------------
+# -- Function/Class Definitions --------
+# --------------------------------------
+
+# ------------------------------------------------------------
+# Function: input_files()
+# Desc    : Walks the directories starting at
+#           "starting_directory". Searches for files matching
+#           the regex pattern and returns a Dictionary of
+#           files using FQN, attrs, etc.
+# Args    : 1-Starting Directory (starting_directory)
+#           2-file type (file_type)
+# Retn    : 1-Dictionary of fully qualified file names
+#           & attributes
+# ------------------------------------------------------------
+def input_files(starting_directory):
+  file_dict     = {}
+  fhost         = ''
+  ftype         = ''
+  fdt           = ''
+  fyear         = ''
+  fmon          = ''
+  fday          = ''
+  ftime         = ''
+
+  for (path, dirs, files) in walk(starting_directory):
+    for file in files:
+      if isfile(file):
+        filepath = abspath(file)
+        (mode,inode,dev,nlink,uid,gid,bytes,atime,mtime,ctime) = stat(filepath)
+        file_dict[filepath] = {
+         'name'  : file,
+         'type'  : ftype,
+         'mode'  : mode,
+         'inode' : inode,
+         'dev'   : dev,
+         'nlink' : nlink,
+         'uid'   : uid,
+         'gid'   : gid,
+         'bytes' : bytes,
+         'atime' : atime,
+         'mtime' : mtime,
+         'ctime' : ctime
+        }
+
+  return(file_dict)
+# ------------------------------------------------------------
+# End input_files()
+# ------------------------------------------------------------
+
+# --------------------------------------
+# ---- End Function Definitions --------
+# --------------------------------------
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  cmd            = basename(argv[0])
+  version        = '1.00'
+  version_date   = 'Thu Jan 10 11:15:48 CST 2019'
+  dev_state      = 'Production'
+  cmd_desc       = 'Fix Names'
+  banner         = cmd_desc + ': Release ' + version + ' '  + dev_state + '. Last updated: ' + version_date
+
+  # Process command line options
+  # ----------------------------------
+  ArgParser = OptionParser()
+  ArgParser.add_option("-d",                               dest="start_dir",   default='.',   type=str, help="starting directory")
+  ArgParser.add_option("-r",         action="store_true",  dest="rename",     default=False,           help="rename files")
+  ArgParser.add_option("--v",        action="store_true",  dest="show_ver",    default=False,           help="print version info.")
+
+  Option, Args = ArgParser.parse_args()
+  show_ver    = Option.show_ver
+  rename      = Option.rename
+  start_dir   = Option.start_dir
+
+  if show_ver:
+    print('\n' + banner)
+    exit(0)
+
+  file_dict = input_files(start_dir)
+  if file_dict != {}:
+    print("\nFiles found: %s\n" % len(file_dict))
+  else:
+    print("\nNo files found.")
+    exit(1)
+
+  for file_name in sorted(file_dict):
+    new_file_name = ''
+    try:
+      new_file_name = basename(file_name).replace('_',' ').title()
+    except:
+      print("No _ characters found in : %s" % basename(file_name))
+      exit(1)
+      pass
+    if (new_file_name != basename(file_name)):
+      pos = new_file_name.rfind('.')
+      base = new_file_name[0:pos]
+      ext  = new_file_name[pos+1:].lower()
+      new_file_name = base + '.' + ext
+      directory = dirname(file_name)
+      new_file_name = pathjoin(directory, new_file_name)
+      print("Renaming: %s" % file_name)
+      print("      to: %s" % new_file_name)
+      renamefile(file_name, new_file_name)
+      
+
+  exit()
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------

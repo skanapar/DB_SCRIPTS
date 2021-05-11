@@ -1,0 +1,45 @@
+#!/bin/bash
+
+PARM=$1
+
+
+ps -ef | grep pmon | grep -v grep | grep -v perl | grep -v ASM |\
+while read PMON; do
+  INST=`echo "$PMON" | awk {' print $8 '} | cut -f3 -d_`
+
+  MAIN_ENV=~/.env/main.env
+  if [ -r $MAIN_ENV ]; then
+     . $MAIN_ENV $INST
+  else
+     echo 'Could not open $MAIN_ENV for read.'
+  fi
+
+  echo $INST
+
+  sqlplus -s /nolog <<-EOF
+  connect / as sysdba
+
+  set serveroutput on size 1000000
+
+  -- Revert to Default Setting
+  -- exec dbms_scheduler.set_attribute(name => 'MONDAY_WINDOW',    attribute=>'RESOURCE_PLAN', value=>'DEFAULT_MAINTENANCE_PLAN');
+  -- exec dbms_scheduler.set_attribute(name => 'TUESDAY_WINDOW',   attribute=>'RESOURCE_PLAN', value=>'DEFAULT_MAINTENANCE_PLAN');
+  -- exec dbms_scheduler.set_attribute(name => 'WEDNESDAY_WINDOW', attribute=>'RESOURCE_PLAN', value=>'DEFAULT_MAINTENANCE_PLAN');
+  -- exec dbms_scheduler.set_attribute(name => 'THURSDAY_WINDOW',  attribute=>'RESOURCE_PLAN', value=>'DEFAULT_MAINTENANCE_PLAN');
+  -- exec dbms_scheduler.set_attribute(name => 'FRIDAY_WINDOW',    attribute=>'RESOURCE_PLAN', value=>'DEFAULT_MAINTENANCE_PLAN');
+  -- exec dbms_scheduler.set_attribute(name => 'SATURDAY_WINDOW',  attribute=>'RESOURCE_PLAN', value=>'DEFAULT_MAINTENANCE_PLAN');
+  -- exec dbms_scheduler.set_attribute(name => 'SUNDAY_WINDOW',    attribute=>'RESOURCE_PLAN', value=>'DEFAULT_MAINTENANCE_PLAN');
+  -- End Defaults --
+  
+  -- Disable Default Maintenance Plan for Maintenance Windows
+  exec dbms_scheduler.set_attribute_null(name => 'MONDAY_WINDOW',    attribute => 'RESOURCE_PLAN'); 
+  exec dbms_scheduler.set_attribute_null(name => 'TUESDAY_WINDOW',   attribute => 'RESOURCE_PLAN'); 
+  exec dbms_scheduler.set_attribute_null(name => 'WEDNESDAY_WINDOW', attribute => 'RESOURCE_PLAN'); 
+  exec dbms_scheduler.set_attribute_null(name => 'THURSDAY_WINDOW',  attribute => 'RESOURCE_PLAN'); 
+  exec dbms_scheduler.set_attribute_null(name => 'FRIDAY_WINDOW',    attribute => 'RESOURCE_PLAN'); 
+  exec dbms_scheduler.set_attribute_null(name => 'SATURDAY_WINDOW',  attribute => 'RESOURCE_PLAN'); 
+  exec dbms_scheduler.set_attribute_null(name => 'SUNDAY_WINDOW',    attribute => 'RESOURCE_PLAN');
+EOF
+
+done
+

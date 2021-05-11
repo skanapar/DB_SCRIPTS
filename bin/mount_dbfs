@@ -1,0 +1,14 @@
+#!/bin/bash
+
+export ORAENV_ASK=NO
+export ORACLE_SID=DBFS1
+. oraenv
+
+STAT=`srvctl status database -d DBFS | grep 'Instance DBFS1 is running on node enkdb03'`
+
+if [ -z "$STAT" ]; then
+  echo DBFS database is not running on this server.
+  echo Exiting...
+else
+  mount-dbfs.sh start /dbfs
+fi

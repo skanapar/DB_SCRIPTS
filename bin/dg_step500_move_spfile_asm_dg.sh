@@ -1,0 +1,1 @@
+move_spfile_asm_dg.sh

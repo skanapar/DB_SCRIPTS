@@ -1,0 +1,395 @@
+#!/bin/env python
+
+##################################################################################################################
+#  Name:        nbupar                                                                                           #
+#  Author:      Randy Johnson                                                                                    #
+#  Description: Generates Dixie parameter files that support Monthly L0, Weekly L0, Daily L1, and FRA backups.   #
+#               Many Dixie parameters are hard coded in this script and an attempt is made to make these values  #
+#               easy to update.                                                                                  #
+#                                                                                                                #
+#  Usage:       nbupar [options]                                                                                 #
+#  Options:                                                                                                      #
+#  -c Client    Netbackup client (default odbdev03-m3bk)                                                         #
+#  -d DC        Data Center Code (default PDC)                                                                   #
+#  -e Env       Netbackup Environment (p01, p02, ... np01, np02, ... default p01)                                #
+#  -g Gen       Generate files (default false)                                                                   #
+#  -m Marc      Marc level (1, 2, 3, 4. default 1)                                                               #
+#  -h help      show this help message and exit                                                                  #
+#  -v           show version information and exit                                                                #
+#                                                                                                                #
+#  Example: nbupar -c odbdev03-m3bk -m 1 -d PDC -e p02 -g                                                        #
+#                                                                                                                #
+#  Example: nbupar                                                                                               #
+#  Enter Netbackup client: odbdev03-m3bk                                                                         #
+#  Enter Netbackup environment: p01                                                                              #
+#  Enter Marc level: 1                                                                                           #
+#  Enter Data Center code: pdc                                                                                   #
+#                                                                                                                #
+# History:                                                                                                       #
+#                                                                                                                #
+# Date       Ver. Who              Change Description                                                            #
+# ---------- ---- ---------------- ----------------------------------------------------------------------------- #
+# 11/11/2016 1.00 Randy Johnson    Initial release.                                                              #
+# 11/14/2016 1.10 Randy Johnson    Commented dixie.conf out. Added Env to parfile names to make them unique.     #
+##################################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+from os.path    import basename
+from os.path    import isfile
+from optparse   import OptionParser
+from sys        import exit
+from sys        import argv
+from sys        import version_info
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  Cmd                 = basename(argv[0])
+  Version             = '1.10'
+  CmdDesc             = 'NBU Oracle'
+  VersionDate         = 'Mon Nov 14 13:28:34 MST 2016'
+  DevState            = 'Production'
+  Banner              = CmdDesc + ': Release ' + Version + ' '  + DevState + '. Last updated: ' + VersionDate
+  DixieFilename       = 'dixie.conf'
+  MonthlyFilename     = ''
+  WeeklyFilename      = ''
+  DailyFilename       = ''
+  FraFilename         = ''
+  DixieFileContents   = ''
+  MonthlyFileContents = ''
+  WeeklyFileContents  = ''
+  DailyFileContents   = ''
+  FraFileContents     = ''
+  MarcDict            = {}
+
+  DixieCfgDict                             = {}
+  DixieCfgDict['backup_archlogs']          = 'false'
+  DixieCfgDict['backup_controlfile']       = 'true'
+  DixieCfgDict['backup_device']            = 'sbt'
+  DixieCfgDict['backup_directory']         = '/db_backup'
+  DixieCfgDict['backup_type']              = 'database'
+  DixieCfgDict['catalog']                  = 'DGTEST'
+  DixieCfgDict['catalog_user']             = 'rman_catalog'
+  DixieCfgDict['compression_optimization'] = 'false'
+  DixieCfgDict['configure_rman']           = 'false'
+  DixieCfgDict['copy']                     = 'false'
+  DixieCfgDict['cumulative']               = 'false'
+  DixieCfgDict['debug']                    = 'false'
+  DixieCfgDict['delete_archlogs']          = 'false'
+  DixieCfgDict['delete_obsolete']          = 'true'
+  DixieCfgDict['disk_channels']            = '8'
+  DixieCfgDict['disk_format']              = 'Backup_%d_%U'
+  DixieCfgDict['distlist']                 = 'randy.johnson@csgi.com'
+  DixieCfgDict['generate']                 = 'false'
+  DixieCfgDict['incremental_level']        = '0'
+  DixieCfgDict['notify']                   = 'fail'
+  DixieCfgDict['sbt_channels']             = '8'
+  DixieCfgDict['sbt_format']               = 'Backup_%d_%U'
+  DixieCfgDict['retention']                = 'RECOVERY WINDOW OF 7 DAYS'
+  DixieCfgDict['trace']                    = 'false'
+
+  DailyParDict                             = {}
+  DailyParDict['backup_type']              = 'database'
+  DailyParDict['configure_rman']           = 'false'
+  DailyParDict['incremental_level']        = '1'
+  DailyParDict['keep_days']                = '30'
+
+  WeeklyParDict                            = {}
+  WeeklyParDict['backup_type']             = 'database'
+  WeeklyParDict['configure_rman']          = 'true'
+  WeeklyParDict['incremental_level']       = '0'
+  WeeklyParDict['keep_days']               = '90'
+
+  MonthlyParDict                           = {}
+  MonthlyParDict['backup_type']            = 'database'
+  MonthlyParDict['configure_rman']         = 'false'
+  MonthlyParDict['incremental_level']      = '0'
+  MonthlyParDict['keep_days']              = '365'
+
+  FraParDict                               = {}
+  FraParDict['backup_type']                = 'fra'
+  FraParDict['configure_rman']             = 'false'
+  FraParDict['incremental_level']          = '0'
+  FraParDict['keep_days']                  = '30'
+
+  Usage  = 'This script generates Dixie parameter files that support Monthly L0, Weekly L0, Daily L1,'
+  Usage += '\nand FRA backups.\n\n'
+  Usage += Cmd + ' [options]'
+  Usage += '\n\nOptions:'
+  Usage += '\n-c Client    Netbackup client (default odbdev03-m3bk)'
+  Usage += '\n-d DC        Data Center Code (default PDC)'
+  Usage += '\n-e Env       Netbackup Environment (p01, p02, ... np01, np02, ... default p01)'
+  Usage += '\n-g Gen       Generate files (default false)'
+  Usage += '\n-m Marc      Marc level (1, 2, 3, 4. default 1)'
+  Usage += '\n-h help      show this help message and exit'
+  Usage += '\n-v           show version information and exit'
+  Usage += '\n\nExample: ' + Cmd + ' -c odbdev03-m3bk -m 1 -d PDC -e p02 -g'
+  Usage += '\n\nExample: ' + Cmd
+  Usage += '\nEnter Netbackup client: odbdev03-m3bk'
+  Usage += '\nEnter Netbackup environment: p01'
+  Usage += '\nEnter Marc level: 1'
+  Usage += '\nEnter Data Center code: pdc'
+
+  ArgParser = OptionParser(add_help_option=False, usage=Usage)
+  ArgParser.add_option('-c',                       dest='Client',    default='odbdev03-m3bk')
+  ArgParser.add_option('-d',                       dest='DC',        default='PDC')
+  ArgParser.add_option('-e',                       dest='Env',       default='p01')
+  ArgParser.add_option('-g', action="store_true",  dest="Gen",       default=False)
+  ArgParser.add_option('-m',                       dest='Marc',      default='1')
+  ArgParser.add_option("-h", action="store_true",  dest="Help",      default=False)
+  ArgParser.add_option("-v", action="store_true",  dest="ShowVer",   default=False)
+
+  Option, Args = ArgParser.parse_args()
+  Argc = len(Args)
+
+  # Assign command line options to variables.
+  # ------------------------------------------
+  Help      = Option.Help
+  Client    = Option.Client
+  DC        = Option.DC.upper()
+  Env       = Option.Env
+  Gen       = Option.Gen
+  Marc      = Option.Marc
+  ShowVer   = Option.ShowVer
+
+  # Print version information and exit.
+  # -------------------------------------
+  if (ShowVer):
+    print('\n' + Banner)
+    exit(0)
+
+  # Print help screent and exit.
+  # -------------------------------------
+  if (Help):
+    print('\n' + Usage)
+    exit(0)
+
+  # If client is not passed on the command line, then prompt for it.
+  # -------------------------------------------------------------------
+  if (Client == ''):
+    if (version_info[0] >= 3):
+      Client = input('\nEnter Netbackup client: ')
+    else:
+      Client = raw_input('\nEnter Netbackup client: ')
+
+  # If Data Center is not passed on the command line, then prompt for it.
+  # ----------------------------------------------------------------------
+  if (DC == ''):
+    if (version_info[0] >= 3):
+      DC = input('\nEnter Data Center code: ')
+    else:
+      DC = raw_input('\nEnter Data Center code: ')
+
+  # If environment is not passed on the command line, then prompt for it.
+  # ----------------------------------------------------------------------
+  if (Env == ''):
+    if (version_info[0] >= 3):
+      Env = input('\nEnter Netbackup environment: ')
+    else:
+      Env = raw_input('\nEnter Netbackup environment: ')
+
+  # If Marc level is not passed on the command line, then prompt for it.
+  # ----------------------------------------------------------------------
+  if (Marc == ''):
+    if (version_info[0] >= 3):
+      Marc = input('\nEnter Marc Level: ')
+    else:
+      Marc = raw_input('\nEnter Marc Level: ')
+  Marc = Marc.upper()
+
+  MarcKey = 'MARC' + Marc + DC
+  MarcDict[MarcKey] = {}
+  MarcDict[MarcKey]['POLICY']       = 'M' + Marc + '-DB-' + DC + '-ORACLE'
+  MarcDict[MarcKey]['POLICY']       = 'M' + Marc + '-DB-' + DC + '-ORACLE'
+  MarcDict[MarcKey]['POLICY']       = 'M' + Marc + '-DB-' + DC + '-ORACLE'
+  MarcDict[MarcKey]['POLICY']       = 'M' + Marc + '-DB-' + DC + '-ORACLE'
+  MarcDict[MarcKey]['POLICY']       = 'M' + Marc + '-DB-' + DC + '-ORACLE'
+  MarcDict[MarcKey]['POLICY']       = 'M' + Marc + '-DB-' + DC + '-ORACLE'
+  MarcDict[MarcKey]['POLICY']       = 'M' + Marc + '-DB-' + DC + '-ORACLE'
+
+  #MarcDict[MarcKey]['SCHEDULE_MONTHLY'] = 'monthly_' + Env + '_L0'
+  #MarcDict[MarcKey]['SCHEDULE_WEEKLY']  = 'weekly_'  + Env + '_L0'
+  #MarcDict[MarcKey]['SCHEDULE_DAILY']   = 'daily_'   + Env + '_L1'
+  #MarcDict[MarcKey]['SCHEDULE_ARCH']    = 'daily_'   + Env + '_arch'
+
+  MarcDict[MarcKey]['SCHEDULE_MONTHLY'] = Env + '-monthly_L0'
+  MarcDict[MarcKey]['SCHEDULE_WEEKLY']  = Env + '-weekly_L0'
+  MarcDict[MarcKey]['SCHEDULE_DAILY']   = Env + '-daily_L1'
+  MarcDict[MarcKey]['SCHEDULE_ARCH']    = Env + '-daily_arch'
+
+  ## Create Dixie config file contents
+  ## -----------------------------------
+  #DixieFileContents  = '# ' + DixieFilename
+  #DixieFileContents += '\n# ---------------------'
+  #for key in sorted(DixieCfgDict) :
+  #  DixieFileContents += "\n%-30s = %-s" % (key, DixieCfgDict[key])
+  #DixieFileContents += '\n'
+  #print("\n%s" % DixieFileContents)
+
+  # Print examples using these Netbackup for Oracle attributes.
+  # -------------------------------------------------------------------
+  if (MarcKey in MarcDict) :
+    Env = Env.lower()
+    print('')
+    for MarcKey in MarcDict :
+      Policy          = MarcDict[MarcKey]['POLICY']
+      MonthlySchedule = MarcDict[MarcKey]['SCHEDULE_MONTHLY']
+      WeeklySchedule  = MarcDict[MarcKey]['SCHEDULE_WEEKLY']
+      DailySchedule   = MarcDict[MarcKey]['SCHEDULE_DAILY']
+      FraSchedule     = MarcDict[MarcKey]['SCHEDULE_ARCH']
+
+      # Create Monthly Parfile contents
+      # -----------------------------------
+      MonthlyFilename = 'MONTHLY_LEVEL_0_' + MarcKey + '_' + Env.upper() + '_DB_ORACLE_TAPE.par'
+      MonthlyFileContents = MonthlyFilename
+      MonthlyFileContents += '\n--------------------------------------------'
+      for key in sorted(MonthlyParDict) :
+        MonthlyFileContents += '\n%-30s = %-100s' % (key,MonthlyParDict[key])
+      MonthlyFileContents += "\nsbt_library                    = ENV=(NB_ORA_CLIENT=%s, NB_ORA_POLICY=%s, NB_ORA_SCHED=%s)\n\n" % (Client,Policy,MonthlySchedule)
+      print(MonthlyFileContents)
+
+      # Create Weekly Parfile contents
+      # -----------------------------------
+      WeeklyFilename = 'WEEKLY_LEVEL_0_' + MarcKey + '_' + Env.upper() + '_DB_ORACLE_TAPE.par'
+      WeeklyFileContents = WeeklyFilename
+      WeeklyFileContents += '\n--------------------------------------------'
+      for key in sorted(WeeklyParDict) :
+        WeeklyFileContents += '\n%-30s = %-100s' % (key,WeeklyParDict[key])
+      WeeklyFileContents += "\nsbt_library                    = ENV=(NB_ORA_CLIENT=%s, NB_ORA_POLICY=%s, NB_ORA_SCHED=%s)\n\n" % (Client,Policy,WeeklySchedule)
+      print(WeeklyFileContents)
+
+      # Create Daily Parfile contents
+      # -----------------------------------
+      DailyFilename = 'DAILY_LEVEL_1_' + MarcKey +  '_' + Env.upper() + '_DB_ORACLE_TAPE.par'
+      DailyFileContents = DailyFilename
+      DailyFileContents += '\n--------------------------------------------'
+      for key in sorted(DailyParDict) :
+        DailyFileContents += '\n%-30s = %-100s' % (key,DailyParDict[key])
+      DailyFileContents += "\nsbt_library                    = ENV=(NB_ORA_CLIENT=%s, NB_ORA_POLICY=%s, NB_ORA_SCHED=%s)\n\n" % (Client,Policy,DailySchedule)
+      print(DailyFileContents)
+
+      # Create FRA Parfile contents
+      # -----------------------------------
+      FraFilename = 'FRA_ARCHLOGS_' + MarcKey + '_' + Env.upper() + '_ARC_ORACLE_TAPE.par'
+      FraFileContents = FraFilename
+      FraFileContents += '\n--------------------------------------------'
+      for key in sorted(FraParDict) :
+        FraFileContents += '\n%-30s = %-100s' % (key,FraParDict[key])
+      FraFileContents += "\nsbt_library                    = ENV=(NB_ORA_CLIENT=%s, NB_ORA_POLICY=%s, NB_ORA_SCHED=%s)\n\n" % (Client,Policy,FraSchedule)
+      print(FraFileContents)
+  else :
+    print(MarcDict)
+    print('Marc not found: %s' % MarcKey)
+    print('Use one of the following Marc levels:')
+    for MarcKey in MarcDict :
+      print('  %s' % MarcKey)
+      exit(1)
+
+  if (Gen == True) :
+    ## Write Dixie Configuration file...
+    ## ------------------------------------------
+    #Overwrite = 'Y'
+    #if (isfile(DixieFilename)) :
+    #  Overwrite = 'N'
+    #  if (version_info[0] >= 3):
+    #    Overwrite = input('\n' + DixieFilename + ' already exists. Overwrite? (y/N) : ')
+    #  else:
+    #    Overwrite = raw_input('\n' + DixieFilename + ' already exists. Overwrite? (y/N) : ')
+    #  Overwrite = Overwrite.upper()
+    #
+    #if (Overwrite == 'Y') :
+    #  try:
+    #    DixieFile = open(DixieFilename, 'w')
+    #  except:
+    #    print("Cannot open " + DixieFilename + " for write: %s" % DixieFilename)
+    #    exit(1)
+    #  DixieFile.write(DixieFileContents)
+    #  DixieFile.close()
+
+    # Write Monthly Backup Parameter file...
+    # ------------------------------------------
+    Overwrite = 'Y'
+    if (isfile(MonthlyFilename)) :
+      Overwrite = 'N'
+      if (version_info[0] >= 3):
+        Overwrite = input('\n' + MonthlyFilename + ' already exists. Overwrite? (y/N) : ')
+      else:
+        Overwrite = raw_input('\n' + MonthlyFilename + ' already exists. Overwrite? (y/N) : ')
+      Overwrite = Overwrite.upper()
+
+    if (Overwrite == 'Y') :
+      try:
+        MonthlyFile = open(MonthlyFilename, 'w')
+      except:
+        print("Cannot open Monthly Parfile for write: %s" % MonthlyFilename)
+        exit(1)
+      MonthlyFile.write(MonthlyFileContents)
+      MonthlyFile.close()
+
+    # Write Weekly Backup Parameter file...
+    # ------------------------------------------
+    Overwrite = 'Y'
+    if (isfile(WeeklyFilename)) :
+      Overwrite = 'N'
+      if (version_info[0] >= 3):
+        Overwrite = input('\n' + WeeklyFilename + ' already exists. Overwrite? (y/N) : ')
+      else:
+        Overwrite = raw_input('\n' + WeeklyFilename + ' already exists. Overwrite? (y/N) : ')
+      Overwrite = Overwrite.upper()
+
+    if (Overwrite == 'Y') :
+      try:
+        WeeklyFile = open(WeeklyFilename, 'w')
+      except:
+        print("Cannot open Weekly Parfile for write: %s" % WeeklyFilename)
+        exit(1)
+      WeeklyFile.write(WeeklyFileContents)
+      WeeklyFile.close()
+
+    # Write Daily Backup Parameter file...
+    # ------------------------------------------
+    Overwrite = 'Y'
+    if (isfile(DailyFilename)) :
+      Overwrite = 'N'
+      if (version_info[0] >= 3):
+        Overwrite = input('\n' + DailyFilename + ' already exists. Overwrite? (y/N) : ')
+      else:
+        Overwrite = raw_input('\n' + DailyFilename + ' already exists. Overwrite? (y/N) : ')
+      Overwrite = Overwrite.upper()
+
+    if (Overwrite == 'Y') :
+      try:
+        DailyFile = open(DailyFilename, 'w')
+      except:
+        print("Cannot open Daily Parfile for write: %s" % DailyFilename)
+        exit(1)
+      DailyFile.write(DailyFileContents)
+      DailyFile.close()
+
+    # Write FRA Backup Parameter file...
+    # ------------------------------------------
+    Overwrite = 'Y'
+    if (isfile(FraFilename)) :
+      Overwrite = 'N'
+      if (version_info[0] >= 3):
+        Overwrite = input('\n' + FraFilename + ' already exists. Overwrite? (y/N) : ')
+      else:
+        Overwrite = raw_input('\n' + FraFilename + ' already exists. Overwrite? (y/N) : ')
+      Overwrite = Overwrite.upper()
+
+    if (Overwrite == 'Y') :
+      try:
+        FraFile = open(FraFilename, 'w')
+      except:
+        print("Cannot open Fra Parfile for write: %s" % FraFilename)
+        exit(1)
+      FraFile.write(FraFileContents)
+      FraFile.close()
+
+  exit()
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------

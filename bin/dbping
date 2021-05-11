@@ -1,0 +1,187 @@
+#!/oracle/ISP/perl/bin/perl
+
+#!/u01/app/11.2.0/grid/perl/bin/perl
+####!/usr/bin/perl
+
+#################################################################################################
+#                                                                                               #
+#  Name:        dbPing.pl                                                                       #
+#  Author:      Randy Johnson                                                                   #
+#  Description: This program does a simple connect and select from a database in a repeated     #
+#               repeated fassion; just like TC/IP ping utility.                                 #
+#  Input Params: -s SERVICE_NAME                                                                #
+#                -u dba user account to use to login to the instance.                           #
+#                -p passwrd                                                                     #
+#                                                                                               #
+#################################################################################################
+#                                                                                               #
+# MODIFICATION HISTORY:                                                                         #
+#                                                                                               #
+# Chg Date   Chg  By               Change Description                                           #
+# ---------- ---- ---------------- ------------------------------------------------------------ #
+#                                                                                               #
+#################################################################################################
+
+
+# Import Modules/Functions
+#--------------------------#
+use DBI;
+use DBD::Oracle qw(:ora_session_modes);     # Modes translate from numerics to constants (SYSDBA = 2, SYSOPER = 4)
+use File::Basename;
+use Getopt::Long;
+use Data::Dumper;
+use Sys::Hostname;
+use POSIX;
+
+# -------------------------------------------#
+#  Main Program                              #
+# -------------------------------------------#
+$dbi         = 'dbi:Oracle:';
+#$passFile = 'c:\dbtools\etc\password.dat';
+
+# Process command line options
+# --------------------------------
+$Usage  = "\nUsage: $basename [-s SERVICE_NAME] [-u DBA_USER ]  [-p DBA_PASSWORD] [-l LOG_LEVEL] [-h]\n\n";
+$Usage .= "Where: SERVICE_NAME = Oracle Service Name for the target database\n";
+$Usage .= "       -s         = SERVICE_NAME\n";
+$Usage .= "       -u         = Authenticate as this user\n";
+$Usage .= "       -p         = Password\n";
+$Usage .= "       -l         = LOG_LEVEL\n";
+
+GetOptions ( 's:s'   => \$svcName,
+             'l:s'   => \$logLevel,
+             'u:s'   => \$dbUser,
+             'p:s'   => \$dbPwd);
+
+if (not $dbUser) {
+   print "No user specified.\n";
+   print "$Usage\n";
+   exit;
+}
+
+if (not $dbPwd) {
+   print "No password specified.\n";
+   print "$Usage\n";
+   exit;
+}
+
+if (not $svcName) {
+   print "No ORACLE_SID specified.\n";
+   print "$Usage\n";
+   exit;
+}
+
+$dbPwd = getDBPassword($passFile, $svcName, $dbUser, $logLevel) if (not $dbPwd);
+
+$TablesQry  = "SELECT a.OWNER, b.TABLE_NAME FROM DBA_TABLES a, dba_tab_columns b \n";
+$TablesQry .= " WHERE a.owner = b.owner and a.table_name = b.table_name \n";
+$TablesQry .= "   AND a.owner != 'SYS' \n";
+$TablesQry .= "   AND b.table_name not in ( \n";
+$TablesQry .= "       select table_name \n";
+$TablesQry .= "         from dba_tab_columns \n";
+$TablesQry .= "        where data_type not in ('CHAR','DATE','NCHAR','NUMBER','VARCHAR','VARCHAR2'))\n";
+$TablesQry .= " ORDER BY OWNER, TABLE_NAME;\n";
+
+print "$TablesQry\n" if ( $logLevel >= 4 );
+
+$dbh = DBI->connect($dbi . $svcName, $dbUser, $dbPwd, { RaiseError => 0, PrintError => 1, AutoCommit => 0 }) ;#or die "Can't connect to database: $DBI::errstr!";
+$Curs = $dbh->prepare($TablesQry);
+$Curs->execute() || warn "Try again...\n";
+while (($OWNER, $TABLE_NAME) = $Curs->fetchrow) {
+   push @TabList, $OWNER . '.' . $TABLE_NAME;
+   ###~ print $OWNER . '.' . $TABLE_NAME, "\n";
+}
+if ($dbh) { $dbh->disconnect() };
+
+# -------------------------------------------#
+#  Main Program                              #
+# -------------------------------------------#
+eval {
+   while (1) {
+      $dbh = DBI->connect($dbi . $svcName, $dbUser, $dbPwd, { RaiseError => 0, PrintError => 1, AutoCommit => 0 }) ;#or die "Can't connect to database: $DBI::errstr!";
+      foreach $Table (@TabList) {
+         print "$Table\n";
+         $LoadQry   = "SELECT * from " . "$Table";
+         $Curs = $dbh->prepare($LoadQry);
+         $Curs->execute() || warn "Try again...\n";
+         while (@Row = $Curs->fetchrow) {
+            printf "@Row[0] ";
+         }
+      }
+      if ($dbh) { $dbh->disconnect() };
+   } # End Main Program.
+} or warn;
+
+$SIG{__WARN__} = sub {
+   print "\n----------------------------------------------------------------------------------\n";
+   $Now = strftime("%m-%d-%Y %H:%M:%S",localtime);
+   printf "%50s %20s\n", "Failover in progress...", $Now;
+   print "----------------------------------------------------------------------------------\n";
+};
+
+
+
+
+#-----------------
+# Function Defs
+#-----------------
+# -------------------------------------------#
+#  Parse Dingo file - DB passwords           #
+# -------------------------------------------#
+sub getDBPassword {
+   my $passdFile = shift;
+   my $dbName    = shift;
+   my $dbUser    = shift;
+   my $logLevel  = shift;
+   
+   if ( $logLevel >= 4 ) {
+      print "   \$passdFile = $passdFile \n";
+      print "   \$dbName    = $dbName    \n";
+      print "   \$dbUser    = $dbUser    \n";
+   }
+   
+   #$dbUser = uc($dbUser);
+   #$dbName = uc($dbName);
+   my $Line = '';
+
+   if ( not ( -T $passdFile ) && ( -r $passdFile ) ) {      # File must be text and readable to continue...
+      print "Password file is not readable or is not text\n";
+      return '';
+   } else {
+      open(PASSWORD_FILE, "<$passdFile");
+      while ($Line = <PASSWORD_FILE>) {
+         chomp($Line);
+         #$Line = uc($Line);
+         next if $Line =~ /^\s*$/;  # skip blank lines
+         next if $Line =~ /^\s*\#/; # skip comment lines
+         if ( $Line =~ /:/ ) {      # Database accounts here.
+            (my $pwDb, my $pwUsername, my $pwUserpass) = split(':', $Line);
+            if ( $logLevel >= 4 ) {
+               printf "   \$Line = %s\n", $Line      ;
+               printf "      \$pwDb       = %s\n", $pwDb      ;
+               printf "      \$pwUsername = %s\n", $pwUsername;
+               printf "      \$pwUserpass = %s\n\n", $pwUserpass;
+            }
+            if ( ( $pwDb eq $dbName ) and ( $pwUsername eq $dbUser ) and ( $pwUserpass ne '' ) ) {
+               if ( $logLevel >= 3 ) {
+                  printf "\n   Password lookup results:\n";
+                  printf "   ------------------------------\n";
+                  printf "   dbNamd    = %s\n", $dbName;
+                  printf "   Database  = %s\n", $pwDb;
+                  printf "   User Name = %s\n", $pwUsername;
+                  printf "   Password  = %s\n", $pwUserpass;
+               }
+               return $pwUserpass;
+            } else {
+               if ( $pwDb       ) { undef $pwDb      } ;
+               if ( $pwUsername ) { undef $pwUsername} ;
+               if ( $pwUserpass ) { undef $pwUserpass} ;
+            }
+         }
+      }
+      return '';
+   }
+   return '';
+}
+
+

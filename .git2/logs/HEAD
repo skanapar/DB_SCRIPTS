@@ -1,0 +1,13 @@
+0000000000000000000000000000000000000000 ad4dbea1562dbb5d9e4ad1f3f4fcc5a8a7fc7b1e Kanaparthy, S <s.kanaparthy@accenture.com> 1583859377 -0500	commit (initial): Initial Commit
+ad4dbea1562dbb5d9e4ad1f3f4fcc5a8a7fc7b1e 5381434140b9151cd824df6929546ff653060fbf Kanaparthy, S <s.kanaparthy@accenture.com> 1583859654 -0500	commit: Deleted rcv
+5381434140b9151cd824df6929546ff653060fbf 16cef5ddb7b4c4a5ccb580556b566b837e77d38a Kanaparthy, S <s.kanaparthy@accenture.com> 1583859793 -0500	commit: Cleaned up
+16cef5ddb7b4c4a5ccb580556b566b837e77d38a 90395a95b702034536c1fef2effc9b91c1fee494 Kanaparthy, S <s.kanaparthy@accenture.com> 1583872421 -0500	commit: scrubbing
+90395a95b702034536c1fef2effc9b91c1fee494 909a5812c764cd7620d380aa00c84dff4eab4b88 Kanaparthy, S <s.kanaparthy@accenture.com> 1583872698 -0500	commit: cleaning up
+909a5812c764cd7620d380aa00c84dff4eab4b88 b9822db76cc131b019651023c03e4da0bf485060 Kanaparthy, S <s.kanaparthy@accenture.com> 1583950706 -0500	commit: one more
+b9822db76cc131b019651023c03e4da0bf485060 b9822db76cc131b019651023c03e4da0bf485060 Kanaparthy, S <s.kanaparthy@accenture.com> 1584132678 -0500	checkout: moving from master to Develop
+b9822db76cc131b019651023c03e4da0bf485060 9610e9166792093e8b97f8b19680685b76bd6e60 Kanaparthy, S <s.kanaparthy@accenture.com> 1584132768 -0500	commit: Testing GIT Develop branch
+9610e9166792093e8b97f8b19680685b76bd6e60 193ce953b1035c1e28bc50c860d07ad5dcd4f19a Kanaparthy, S <s.kanaparthy@accenture.com> 1584138547 -0500	commit: Cleanup
+193ce953b1035c1e28bc50c860d07ad5dcd4f19a 49863825371009513726a345db342829f681fb7d Kanaparthy, S <s.kanaparthy@accenture.com> 1586555458 -0500	pull --tags origin Develop: Fast-forward
+49863825371009513726a345db342829f681fb7d 526ca2978308ec7020c69c8545d1fac242416d44 Kanaparthy, S <s.kanaparthy@accenture.com> 1587008342 -0500	commit: Updated TNS generation script
+526ca2978308ec7020c69c8545d1fac242416d44 0000000000000000000000000000000000000000 Kanaparthy, S <s.kanaparthy@accenture.com> 1620672421 -0500	Branch: renamed refs/heads/Develop to refs/heads/main
+0000000000000000000000000000000000000000 526ca2978308ec7020c69c8545d1fac242416d44 Kanaparthy, S <s.kanaparthy@accenture.com> 1620672421 -0500	Branch: renamed refs/heads/Develop to refs/heads/main

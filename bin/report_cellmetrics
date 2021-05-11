@@ -1,0 +1,388 @@
+#!/bin/env python
+
+##################################################################################################
+# Name:        report_cellmetrics                                                                #
+# Author:      Randy Johnson                                                                     #
+# Description: Parses cell metrics history files from Exadata Storage cells. These files         #
+#              contain archived cell metrics in XML format. They are located in the directory:   #
+#              /opt/oracle/cell/cellsrv/deploy/config/metrics in each storage cell. Check out    #
+#              download_cellmetrics script for maintaining a local repository (a copy of these   #
+#              cell metric history files (ex. metrics_150831_08.gz).                             #
+#                                                                                                #
+#              Each gzipped metrics file contains an hour's worth (60, 1 second samples) of      #
+#              metrics for the storage cell.                                                     #
+#                                                                                                #
+#              Uncompresses and parses all files found in the local repository. The local        #
+#              repository is in the form of:                                                     #
+#                                                                                                #
+#                ../home_dir/enkcel01                                                            #
+#                           /enkcel02                                                            #
+#                           /enkcel03                                                            #
+#                Where:                                                                          #
+#                  home_dir: location of the report_cellmetrics sript.                           #
+#                  enkcel01: directory containing the metrics files; named                       #
+#                            after the storage cell hostname.                                    #
+#                                                                                                #
+# Usage: report_cellmetrics [options]                                                            #
+#                                                                                                #
+# Options:                                                                                       #
+#   -h, --help      show this help message and exit                                              #
+#   -i INFILENAME   input file (if reporting just one file                                       #
+#   -t TYPE         output file type (text, csv)                                                 #
+#   -o OUTFILENAME  output file name (ex. cellmetrics.txt, cellmetrics.csv)                      #
+#                                                                                                #
+# History:                                                                                       #
+#                                                                                                #
+# Date       Ver. Who              Change Description                                            #
+# ---------- ---- ---------------- ------------------------------------------------------------- #
+# 09/03/2015 1.00 Randy Johnson    Initial release.                                              #
+#                                                                                                #
+# Todo's                                                                                         #
+#                                                                                                #
+# Wish List:                                                                                     #
+#                                                                                                #
+##################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+import               gzip
+
+from datetime        import datetime
+from optparse        import OptionParser
+from os              import listdir
+from os.path         import basename
+from os.path         import isfile
+from os.path         import join as pathjoin
+from signal          import SIG_DFL
+from signal          import SIGPIPE
+from signal          import signal
+from sys             import argv
+from sys             import exit
+from sys             import path
+from sys             import stdout
+from sys             import version_info
+from time            import gmtime
+from time            import strftime
+from xml.sax         import make_parser
+from xml.sax         import parseString
+from xml.sax.handler import ContentHandler
+
+# For handling termination in stdout pipe.
+signal(SIGPIPE, SIG_DFL)
+
+# --------------------------------------
+# ---- Function & Class Definitions ----
+# --------------------------------------
+
+#---------------------------------------------------------------------------
+# Def : XMLHandler()
+# Desc: Parses the XML cell metrics file.
+# Args: string containing the contents of the gzip file (XML doc format).
+# Retn: Returns a dictionary of dictionaries structure in the form of:
+#        d[CD_BY_FC_DIRTY~CD_00_enkcel01~1440554322000] {
+#          'name'               : CD_BY_FC_DIRTY,
+#          'metricValue'        : 0.0,
+#          'metricValueHistory' : ['228387565:0.0','228387625:0.0','228387685:0.0' ...]
+#          'metricObjectName'   : CD_00_enkcel01,
+#          'alertState'         : normal,
+#          'collectionTime'     : 1440554322000
+#         }
+#---------------------------------------------------------------------------
+class XMLHandler(ContentHandler):
+  def __init__(self):
+    self.XmlDoD = {}
+
+  def parseString(self, f):
+    parseString(f, self)
+    return self.XmlDoD
+
+  def startElement(self, name, attrs):
+
+    # head...tail of metrics_150826_00.gz
+    # ----------------------------------------------------------------------
+    # <?xml version="1.0" encoding="UTF-8"?>
+    # <Targets version="0.0">
+    # <Target TYPE="oracle.ossmgmt.ms.core.MSMetric" NAME="CD_BY_FC_DIRTY">
+    # <Attribute NAME="name" VALUE="CD_BY_FC_DIRTY"></Attribute>
+    # <Attribute NAME="metricValue" VALUE="0.0"></Attribute>
+    # <Attribute NAME="metricValueHistory" VALUE="228387565:0.0 228387625:0.0 228387685:0.0 228387745:0.0 228387805:0.0 228387865:0.0 228387925:0.0 228387985:0.0 228388045:0.0 228388105:0.0 228388165:0.0 228388225:0.0 228388285:0.0 228388345:0.0 228388405:0.0 228388466:0.0 228388526:0.0 228388586:0.0 228388646:0.0 228388706:0.0 228388766:0.0 228388826:0.0 228388886:0.0 228388946:0.0 228389006:0.0 228389066:0.0 228389126:0.0 228389186:0.0 228389246:0.0 228389306:0.0 228389366:0.0 228389426:0.0 228389486:0.0 228389546:0.0 228389606:0.0 228389666:0.0 228389726:0.0 228389786:0.0 228389846:0.0 228389906:0.0 228389966:0.0 228390026:0.0 228390086:0.0 228390146:0.0 228390206:0.0 228390266:0.0 228390326:0.0 228390386:0.0 228390446:0.0 228390506:0.0 228390566:0.0 228390626:0.0 228390686:0.0 228390746:0.0 228390806:0.0 228390866:0.0 228390926:0.0 228390986:0.0 228391046:0.0 228391106:0.0"></Attribute>
+    # <Attribute NAME="metricObjectName" VALUE="CD_00_enkcel01"></Attribute>
+    # <Attribute NAME="alertState" VALUE="normal"></Attribute>
+    # <Attribute NAME="collectionTime" VALUE="1440554322000"></Attribute>
+    # </Target>
+    # ...
+    # </Target>
+    # <Target TYPE="oracle.ossmgmt.ms.core.MSMetric" NAME="SIO_IO_WR_RQ_HD_SEC">
+    # <Attribute NAME="name" VALUE="SIO_IO_WR_RQ_HD_SEC"></Attribute>
+    # <Attribute NAME="metricValue" VALUE="0.0"></Attribute>
+    # <Attribute NAME="metricValueHistory" VALUE="228387565:0.0 228387625:0.0 228387685:0.0 228387745:0.0 228387805:0.0 228387865:0.0 228387925:0.0 228387985:0.0 228388045:0.0 228388105:0.0 228388165:0.0 228388225:0.0 228388285:0.0 228388345:0.0 228388405:0.0 228388466:0.0 228388526:0.0 228388586:0.0 228388646:0.0 228388706:0.0 228388766:0.0 228388826:0.0 228388886:0.0 228388946:0.0 228389006:0.0 228389066:0.0 228389126:0.0 228389186:0.0 228389246:0.0 228389306:0.0 228389366:0.0 228389426:0.0 228389486:0.0 228389546:0.0 228389606:0.05 228389666:0.0 228389726:0.0 228389786:0.0 228389846:0.0 228389906:0.0 228389966:0.0 228390026:0.0 228390086:0.0 228390146:0.0 228390206:0.0 228390266:0.0 228390326:0.0 228390386:0.0 228390446:0.0 228390506:0.0 228390566:0.0 228390626:0.0 228390686:0.0 228390746:0.0 228390806:0.0 228390866:0.0 228390926:0.0 228390986:0.0 228391046:0.0 228391106:0.0"></Attribute>
+    # <Attribute NAME="metricObjectName" VALUE="SMARTIO"></Attribute>
+    # <Attribute NAME="alertState" VALUE="normal"></Attribute>
+    # <Attribute NAME="collectionTime" VALUE="1440554322000"></Attribute>
+    # </Target>
+    # </Targets>
+
+    if name == 'Target':
+      self.TargetKey           = ''
+      self.Name                = ''
+      self.metricValue         = ''
+      self.metricValueHistory  = ''
+      self.metricObjectName    = ''
+      self.alertState          = ''
+      self.collectionTime      = ''
+
+    if name == 'Attribute':
+      Name = attrs.get('NAME')
+
+      if(Name == 'name'):
+        self.Name = attrs.get('VALUE')
+      elif(Name == 'metricValue'):
+        self.metricValue  = attrs.get('VALUE')
+      elif(Name == 'metricValueHistory'):
+        self.metricValueHistory = attrs.get('VALUE')
+      elif(Name == 'metricObjectName'):
+        self.metricObjectName = attrs.get('VALUE')
+      elif(Name == 'alertState'):
+        self.alertState = attrs.get('VALUE')
+      elif(Name == 'collectionTime'):
+        self.collectionTime = attrs.get('VALUE')
+
+      if (self.Name               != '' and
+          self.metricValue        != '' and
+          self.metricValueHistory != '' and
+          self.metricObjectName   != '' and
+          self.alertState         != '' and
+          self.collectionTime != ''):
+
+        self.TargetKey = self.Name + '~' + self.metricObjectName + '~' + self.collectionTime
+
+        self.XmlDoD[self.TargetKey] = {
+         'name'               : self.Name,
+         'metricValue'        : self.metricValue,
+         'metricValueHistory' : self.metricValueHistory,
+         'metricObjectName'   : self.metricObjectName,
+         'alertState'         : self.alertState,
+         'collectionTime'     : self.collectionTime
+        }
+#---------------------------------------------------------------------------
+# End XMLHandler()
+#---------------------------------------------------------------------------
+
+# --------------------------------------
+# -- End Function & Class Definitions --
+# --------------------------------------
+
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  Cmd           = basename(argv[0]).split('.')[0]
+  CmdDesc       = 'Report Cell Metrics'
+  Version       = '1.00'
+  VersionDate   = 'Thu Sep  3 12:57:43 CDT 2015'
+  DevState      = 'Production'
+  Banner        = CmdDesc + ': Release ' + Version + ' '  + DevState + '. Last updated: ' + VersionDate
+  HomeDir       = path[0]
+  #CellList      = ['enkcel01','enkcel02','enkcel03']
+  CellList      = ['enkx3cel01','enkx3cel02','enkx3cel03']
+  #CellList      = ['enkx4cel01','enkx4cel02','enkx4cel03']
+  Parser        = make_parser()
+  InFileDict    = {}
+  MetricsDict   = {}
+
+
+  # Process command line options
+  # ----------------------------------
+  ArgParser = OptionParser()
+  ArgParser.add_option("-d", dest="Detail",      default=False,            action="store_true", help="1 sec. samples (defaults to 1 min. samples")
+  ArgParser.add_option("-f", dest="Float",       default=False,            action="store_true", help="format metric values as float(30.20)")
+  ArgParser.add_option("-i", dest="InFilename",  default='',     type=str,                      help="input file (if reporting just one file")
+  ArgParser.add_option("-t", dest="Type",        default='text', type=str,                      help="output file type (text, csv)")
+  ArgParser.add_option("-o", dest="OutFilename", default='',     type=str,                      help="output file name (ex. cellmetrics.txt, cellmetrics.csv)")
+  ArgParser.add_option("-q", dest="Quiet",       default=False,            action="store_true", help="quiet mode (supress reporting to stdout)")
+
+  Options, args = ArgParser.parse_args()
+
+  Detail      = Options.Detail
+  Float       = Options.Float
+  InFilename  = Options.InFilename
+  OutFilename = Options.OutFilename
+  Type        = Options.Type.upper()
+  Quiet       = Options.Quiet
+  of          = None
+
+  if (Type not in ('TEXT','CSV')):
+    print("\nInvalid report type: %s" % Options.Type)
+    exit(1)
+
+  if (OutFilename != ''):
+    try:
+      of = open(OutFilename, 'w')
+    except:
+      print("Cannot open file for write: %s" % OutFilename)
+      exit(1)
+
+    # Write the header to the output file.
+    try:
+      if(Type == 'TEXT'):
+        if(Detail):
+          of.write('%-10s  %-40s  %-45s  %-19s  %-9s  %30s\n' % ('CELL','NAME','METRIC_OBJECT_NAME','COLLECTION_TIME','SAMPLE_ID','METRIC_VALUE'))
+        else:
+          of.write('%-10s  %-40s  %-45s  %-19s  %30s\n' % ('CELL','NAME','METRIC_OBJECT_NAME','COLLECTION_TIME','METRIC_VALUE'))
+      elif(Type == 'CSV'):
+        if(Detail):
+          of.write('%s,%s,%-s,%s,%s,%s\n' % ('CELL','NAME','METRIC_OBJECT_NAME','COLLECTION_TIME','SAMPLE_ID','METRIC_VALUE'))
+        else:
+          of.write('%s,%s,%-s,%s,%s\n' % ('CELL','NAME','METRIC_OBJECT_NAME','COLLECTION_TIME','METRIC_VALUE'))
+    except:
+      print("Cannot write to output file: %s" % OutFilename)
+      exit(1)
+
+  Now = datetime.now()
+  if(Detail):
+    print('\n===================================================================================================================================================================')
+    print('%s: Release %s Development %117s' % (CmdDesc, Version, Now.strftime("%Y-%m-%d %H:%M")))
+    print('===================================================================================================================================================================')
+  else:
+    print('\n=========================================================================================================================================================')
+    print('%s: Release %s Development %107s' % (CmdDesc, Version, Now.strftime("%Y-%m-%d %H:%M")))
+    print('=========================================================================================================================================================')
+
+  # Make a list of input files (InFileDict[InFilename]) ...
+  if(InFilename != ''):
+    InFileDict[InFilename] = {'cell' : 'unknown'}
+  else:
+    for Cell in CellList:
+      for InFilename in listdir(pathjoin(HomeDir, Cell)):
+        InFilename = pathjoin(HomeDir, Cell, InFilename)
+        InFileDict[InFilename] = {'cell' : Cell}
+
+  # Load up the XML content...
+  # -------------------------------------------------------
+  if(len(InFileDict) > 1):
+    print('\nParsing %s XML files:' % len(InFileDict))
+  else:
+    print('\nParsing %s XML file:' % len(InFileDict))
+
+  for MetFilename in sorted(InFileDict.keys()):
+    MetricsDict = {}
+    Cell = InFileDict[MetFilename]['cell']
+
+    if(Quiet):
+      print("  %s" % MetFilename)
+
+    # Check to see if the input file exists...
+    if(not isfile(MetFilename)):
+      print("\nMissing or invalid input file: %s" % MetFilename)
+      if(len(InFileDict) > 1):
+        continue
+      else:
+        exit(1)
+
+    # Unzip and load the metrics.gz file into FileContents...
+    gzf = None
+    try:
+      gzf = gzip.open(MetFilename, 'r')
+    except:
+      print("Cannot open gzip file for read: %s" % MetFilename)
+      if(len(InFileDict) > 1):
+        continue
+      else:
+        exit(1)
+
+    try:
+      FileContents = gzf.read()
+    except:
+      print("Failure reading metrics file: %s" % MetFilename)
+
+    if(gzf):
+      gzf.close()
+
+    # Parse the XML doc and generate output...
+    try:
+      MetricsDict = XMLHandler().parseString(FileContents)
+    except:
+      print("Failure parsing XML input from metrics file: %s" % MetFilename)
+
+    if(not Quiet):
+      print("\nMetrics file: %s" % MetFilename)
+      if(Detail):
+        print('\nCell        Name                                      Metric Object Name                             Collection Time      Sample ID                    Metric Value')
+        print('----------  ----------------------------------------  ---------------------------------------------  -------------------  ---------  ------------------------------')
+      else:
+        print('\nCell        Name                                      Metric Object Name                             Collection Time                        Metric Value')
+        print('----------  ----------------------------------------  ---------------------------------------------  -------------------  ------------------------------')
+    
+    for TargetKey in sorted(MetricsDict.keys()):
+      CollectionTime = gmtime(float(MetricsDict[TargetKey]['collectionTime'])/1000.00)
+      CollectionTime = strftime("%Y-%m-%d %H:%M:%S", CollectionTime)
+    
+      if(Detail):
+        for item in MetricsDict[TargetKey]['metricValueHistory'].split(' '):
+          SampleId,SampleValue = item.split(':')
+
+          if(not Quiet):
+            # Generate the output.
+            if(Float):
+              print('%-10s  %-40s  %-45s  %-19s  %-9s  %30.20f' % (Cell, MetricsDict[TargetKey]['name'], MetricsDict[TargetKey]['metricObjectName'], CollectionTime, SampleId, round(float(SampleValue),20)))
+            else:
+              print('%-10s  %-40s  %-45s  %-19s  %-9s  %30s' % (Cell, MetricsDict[TargetKey]['name'], MetricsDict[TargetKey]['metricObjectName'], CollectionTime, SampleId, SampleValue))
+
+          if (OutFilename != ''):
+            try:
+              if(Type == 'TEXT'):
+                if(Float):
+                  of.write('%-10s  %-40s  %-45s  %-19s  %-9s  %30.20f\n' % (Cell, MetricsDict[TargetKey]['name'], MetricsDict[TargetKey]['metricObjectName'], CollectionTime, SampleId, round(float(SampleValue),20)))
+                else:
+                  of.write('%-10s  %-40s  %-45s  %-19s  %-9s  %30s\n' % (Cell, MetricsDict[TargetKey]['name'], MetricsDict[TargetKey]['metricObjectName'], CollectionTime, SampleId, SampleValue))
+              elif(Type == 'CSV'):
+                if(Float):
+                  of.write('%s,%s,%s,%s,%s,%f\n' % (Cell, MetricsDict[TargetKey]['name'], MetricsDict[TargetKey]['metricObjectName'], CollectionTime, SampleId, round(float(SampleValue),20)))
+                else:
+                  of.write('%s,%s,%s,%s,%s,%s\n' % (Cell, MetricsDict[TargetKey]['name'], MetricsDict[TargetKey]['metricObjectName'], CollectionTime, SampleId, SampleValue))
+            except:
+              print("\nCannot write to output file: %s" % OutFilename)
+              exit(1)
+      else:
+        if(not Quiet):
+          # Generate the output.
+          if(Float):
+            print('%-10s  %-40s  %-45s  %-19s  %30.20f' % (Cell, MetricsDict[TargetKey]['name'], MetricsDict[TargetKey]['metricObjectName'], CollectionTime, round(float(MetricsDict[TargetKey]['metricValue']),20)))
+          else:
+            print('%-10s  %-40s  %-45s  %-19s  %30s' % (Cell, MetricsDict[TargetKey]['name'], MetricsDict[TargetKey]['metricObjectName'], CollectionTime, MetricsDict[TargetKey]['metricValue']))
+
+        if (OutFilename != ''):
+          try:
+            if(Type == 'TEXT'):
+              if(Float):
+                of.write('%-10s  %-40s  %-45s  %-19s  %30.20f\n' % (Cell, MetricsDict[TargetKey]['name'], MetricsDict[TargetKey]['metricObjectName'], CollectionTime, round(float(MetricsDict[TargetKey]['metricValue']),20)))
+              else:
+                of.write('%-10s  %-40s  %-45s  %-19s  %30s\n' % (Cell, MetricsDict[TargetKey]['name'], MetricsDict[TargetKey]['metricObjectName'], CollectionTime, MetricsDict[TargetKey]['metricValue']))
+            elif(Type == 'CSV'):
+              if(Float):
+                of.write('%s,%s,%s,%s,%f\n' % (Cell, MetricsDict[TargetKey]['name'], MetricsDict[TargetKey]['metricObjectName'], CollectionTime, round(float(MetricsDict[TargetKey]['metricValue']),20)))
+              else:                                                
+                of.write('%s,%s,%s,%s,%s\n' % (Cell, MetricsDict[TargetKey]['name'], MetricsDict[TargetKey]['metricObjectName'], CollectionTime, MetricsDict[TargetKey]['metricValue']))
+          except:
+            print("\nCannot write to output file: %s" % OutFilename)
+            exit(1)
+    
+  if (of):
+    of.close()
+
+  Now = datetime.now()
+  if(Detail):
+    print('===================================================================================================================================================================')
+    print('End of Report%150s' % (Now.strftime("%Y-%m-%d %H:%M")))
+    print('===================================================================================================================================================================')
+  else:
+    print('========================================================================================================================================================')
+    print('End of Report%139s' % (Now.strftime("%Y-%m-%d %H:%M")))
+    print('========================================================================================================================================================')
+
+  exit(0)
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------

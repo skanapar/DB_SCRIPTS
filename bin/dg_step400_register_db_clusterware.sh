@@ -1,0 +1,1 @@
+register_db_clusterware_dg.sh

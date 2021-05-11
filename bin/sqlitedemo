@@ -1,0 +1,100 @@
+#!/bin/env python
+
+##################################################################################################################
+#  Name:        oswreport                                                                                        #
+#  Author:      Randy Johnson                                                                                    #
+#  Description: Prints a tailored report of OS Watcher Archive Data.                                             #
+#                                                                                                                #
+# History:                                                                                                       #
+#                                                                                                                #
+# Date       Ver. Who              Change Description                                                            #
+# ---------- ---- ---------------- ----------------------------------------------------------------------------- #
+# 12/03/2018 1.00 Randy Johnson    Initial release.                                                              #
+##################################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+import csv
+import sqlite3
+
+# --------------------------------------
+# -- Function/Class Definitions --------
+# --------------------------------------
+def init_db(cur):
+  Sql  = 'CREATE TABLE foo (\n'
+  Sql += '   RowId    INTEGER\n'
+  Sql += '  ,Name     TEXT\n'
+  Sql += '  ,Year     INTEGER\n'
+  Sql += '  ,Priority INTEGER\n'
+  Sql += ')'
+
+  cur.execute(Sql)
+
+def populate_db(cur, csv_fp):
+  rdr = csv.reader(csv_fp)
+
+  Sql  = 'INSERT INTO foo (RowId, Name, Year, Priority)\n'
+  Sql += 'VALUES (?,?,?,?)'
+  print(rdr)
+  for row in rdr:
+    print(row)
+  exit()
+  
+  cur.executemany(Sql, rdr)
+
+def query_db(cur):
+  Sql  = "SELECT\n"
+  Sql += "   RowId\n" 
+  Sql += "  ,Name\n"    
+  Sql += "  ,Year\n"
+  Sql += "  ,Priority\n"
+  Sql += "FROM foo;"
+
+  rs = cur.execute(Sql)
+  print("boo")
+  for row in rs:
+    print(row)
+  print("boo")
+  #
+  for des in cur.description:
+    print(des[0])
+  #
+  #headers = [ col[0] for col in cur.description ]
+  #print(headers)
+    
+def get_tabdef(cur):
+  Sql  = "PRAGMA table_info('foo');"
+  rs = cur.execute(Sql)
+  tabdef = cur.fetchall()
+  for row in rs:
+    print(row)
+    
+  for row in rs:
+    print(tabdef)
+    
+
+# --------------------------------------
+# ---- End Function Definitions --------
+# --------------------------------------
+
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  db  = sqlite3.connect(':memory:')
+  cur = db.cursor()
+  init_db(cur)
+  populate_db(cur, open('sqlitedemo.csv'))
+  db.commit()
+  query_db(cur)
+  get_tabdef(cur)
+  print("Boo")
+  
+
+  exit()
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------
+

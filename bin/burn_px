@@ -1,0 +1,58 @@
+#!/bin/bash
+
+export SID=$1
+export user=$2
+export passwd=$3
+export sessions=$4
+export parallel=$5
+
+create_tables() {
+  sqlplus -s /nolog<<EOF
+  connect ${user}/${passwd}@${SID}
+  drop table mytab1;
+  create table mytab1 nologging as select * from dba_objects;
+  insert /*+ APPEND */ into mytab1 (select * from mytab1);
+  commit;
+  insert /*+ APPEND */ into mytab1 (select * from mytab1);
+  commit;
+  insert /*+ APPEND */ into mytab1 (select * from mytab1);
+  commit;
+  insert /*+ APPEND */ into mytab1 (select * from mytab1);
+  commit;
+  insert /*+ APPEND */ into mytab1 (select * from mytab1);
+  commit;
+  insert /*+ APPEND */ into mytab1 (select * from mytab1);
+  commit;
+
+  drop table mytab2;
+  create table mytab2 nologging as select * from mytab1;
+
+  alter table mytab1 parallel(degree $parallel);
+  alter table mytab2 parallel(degree $parallel);
+  EXIT
+EOF
+}
+
+burn_px() {
+  sqlplus -s /nolog<<EOF
+  connect ${user}/${passwd}@${SID}
+
+  select count(*)
+  from mytab1, 
+       mytab2;
+
+  EXIT
+EOF
+}
+
+JOBS=0
+create_tables
+while :; do
+   burn_px &
+   JOBS=`jobs | wc -l`
+   while [ "$JOBS" -ge "$sessions" ]; do
+      sleep 5
+      JOBS=`jobs | wc -l`
+   done
+done
+

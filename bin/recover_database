@@ -1,0 +1,51 @@
+#!/bin/bash
+
+# ===================================================================================================
+# Recover Database: DGLAB
+# ===================================================================================================
+# Oracle Sid              : DGLAB1
+# Oracle Home             : /u01/app/oracle/product/11.2.0.4/dbhome_1
+# Service->Instance       : DGLAB1_RMAN->DGLAB1
+                          : DGLAB2_RMAN->DGLAB2
+# Channels per Instance   : 8   
+# ===================================================================================================
+
+export ORACLE_SID=DGLAB1
+export ORACLE_HOME=/u01/app/oracle/product/11.2.0.4/dbhome_1
+
+$ORACLE_HOME/bin/rman log=/home/oracle/randy/mtk/log/recover_database.sh.`date +"%Y%m%d".%H%M%S`.log<<EOF
+connect target /
+
+run {
+  sql 'alter system set "_backup_disk_bufcnt"  =      64 scope=memory';
+  sql 'alter system set "_backup_disk_bufsz"   = 1048576 scope=memory';
+
+  #set newname for database to '+DGSHAREDDATA';
+
+  allocate channel DGLAB1_1    DEVICE TYPE DISK CONNECT 'sys/LexusISF@ewdrracep2l01-vip0.tceh.net:1531/DGLAB1_RMAN';
+  allocate channel DGLAB2_2    DEVICE TYPE DISK CONNECT 'sys/LexusISF@ewdrracep2l02-vip0.tceh.net:1531/DGLAB2_RMAN';
+
+  allocate channel DGLAB1_3    DEVICE TYPE DISK CONNECT 'sys/LexusISF@ewdrracep2l01-vip0.tceh.net:1531/DGLAB1_RMAN';
+  allocate channel DGLAB2_4    DEVICE TYPE DISK CONNECT 'sys/LexusISF@ewdrracep2l02-vip0.tceh.net:1531/DGLAB2_RMAN';
+
+  allocate channel DGLAB1_5    DEVICE TYPE DISK CONNECT 'sys/LexusISF@ewdrracep2l01-vip0.tceh.net:1531/DGLAB1_RMAN';
+  allocate channel DGLAB2_6    DEVICE TYPE DISK CONNECT 'sys/LexusISF@ewdrracep2l02-vip0.tceh.net:1531/DGLAB2_RMAN';
+
+  allocate channel DGLAB1_7    DEVICE TYPE DISK CONNECT 'sys/LexusISF@ewdrracep2l01-vip0.tceh.net:1531/DGLAB1_RMAN';
+  allocate channel DGLAB2_8    DEVICE TYPE DISK CONNECT 'sys/LexusISF@ewdrracep2l02-vip0.tceh.net:1531/DGLAB2_RMAN';
+
+  allocate channel DGLAB1_9    DEVICE TYPE DISK CONNECT 'sys/LexusISF@ewdrracep2l01-vip0.tceh.net:1531/DGLAB1_RMAN';
+  allocate channel DGLAB2_10   DEVICE TYPE DISK CONNECT 'sys/LexusISF@ewdrracep2l02-vip0.tceh.net:1531/DGLAB2_RMAN';
+
+  allocate channel DGLAB1_11   DEVICE TYPE DISK CONNECT 'sys/LexusISF@ewdrracep2l01-vip0.tceh.net:1531/DGLAB1_RMAN';
+  allocate channel DGLAB2_12   DEVICE TYPE DISK CONNECT 'sys/LexusISF@ewdrracep2l02-vip0.tceh.net:1531/DGLAB2_RMAN';
+
+  allocate channel DGLAB1_13   DEVICE TYPE DISK CONNECT 'sys/LexusISF@ewdrracep2l01-vip0.tceh.net:1531/DGLAB1_RMAN';
+  allocate channel DGLAB2_14   DEVICE TYPE DISK CONNECT 'sys/LexusISF@ewdrracep2l02-vip0.tceh.net:1531/DGLAB2_RMAN';
+
+  allocate channel DGLAB1_15   DEVICE TYPE DISK CONNECT 'sys/LexusISF@ewdrracep2l01-vip0.tceh.net:1531/DGLAB1_RMAN';
+  allocate channel DGLAB2_16   DEVICE TYPE DISK CONNECT 'sys/LexusISF@ewdrracep2l02-vip0.tceh.net:1531/DGLAB2_RMAN';
+
+  recover database;
+}
+EOF

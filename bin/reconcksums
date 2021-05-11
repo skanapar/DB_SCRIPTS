@@ -1,0 +1,223 @@
+#!/bin/env python
+
+##################################################################################################
+#  Name:        reconcksums                                                                      #
+#  Author:      Randy Johnson                                                                    #
+#  Description: Compares the cksum results taken on the source system to those collected on the  #
+#               local system (see run_checksums and checksums scripts), and prints a             #
+#               reconciliation report.                                                           #
+#                                                                                                #
+#  Usage: usage: reconcksums [options]                                                           #
+#  options:                                                                                      #
+#    -h, --help   show this help message and exit                                                #
+#    -v           print version info.                                                            #
+#                                                                                                #
+# History:                                                                                       #
+#                                                                                                #
+# Date       Ver. Who              Change Description                                            #
+# ---------- ---- ---------------- ------------------------------------------------------------- #
+# 08/04/2014 1.00 Randy Johnson    Initial release.                                              #
+#                                                                                                #
+# Todo's                                                                                         #
+#  - None at this time.                                                                          #
+#                                                                                                #
+# Wish List:                                                                                     #
+#  - None at this time.                                                                          #
+##################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+from optparse        import OptionParser
+from os              import listdir
+from os              import environ
+from os.path         import join as pathjoin
+from os.path         import basename
+from os.path         import isfile
+from re              import search
+from re              import compile
+from sys             import exit
+from sys             import argv
+from sys             import stdout
+from sys             import path
+from sys             import version_info
+
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  Cmd          = basename(argv[0])
+  CmdPrefix    = Cmd.split('.')[0]
+  CmdDesc      = 'Check Files (' + Cmd + ')'
+  VersionDate  = 'Thu Aug 01 13:45:03 UTC 2014'
+  Version      = '1.00'
+  Banner       = CmdDesc + ', Release ' + Version + ' Production, ' + VersionDate
+  ArgParser    = OptionParser()
+  Interactive  = stdout.isatty()
+  StgCksumDict = {}
+  ExaCksumDict = {}
+  MismatchList = []
+  Envfile        = './env.sh'
+
+  try:
+    hEnvfile = open(Envfile, 'r')
+  except:
+    print('Cannot open envfile for read:', Envfile)
+    exit(1)
+
+  EnvContents = hEnvfile.read().split('\n')
+  for line in EnvContents:
+    line = line.strip()
+    pos = line.find('#')
+    if (pos >= 0):     # Comment character found.
+      if (pos > 0):    # Comment isn't at the beginning of the line. (there is something to preserve)
+        line = line[0:pos]
+      else:
+        continue
+    if (line != ''):
+      ExportString=split(line)[1]
+      (Var,Val) = ExportString.split('=')
+      environ[Var] = Val
+
+  if (environ['MIG_HOME'] != ''):
+    MigHome      = environ['MIG_HOME']
+    StgCksumFile = '/zfsba/share1/staging_db/checksums.txt'
+    EtcDir       = MigHome + '/etc'
+    LogDir       = MigHome + '/log'
+    ArcFilename  = pathjoin(EtcDir, 'archive_file_list.txt')
+    DbFilename   = pathjoin(EtcDir, 'database_file_list.txt')
+  else:
+    print('Cannot set the Migration Home directory. Check the env.sh script for \'export MIG_HOME={path_to_migration_home}\'')
+    exit(1)
+
+  # Process command line options
+  # ----------------------------------
+  ArgParser.add_option("-v", dest="Version", default=False, action="store_true", help="print version info.")
+
+  Options, args = ArgParser.parse_args()
+  argc = len(args)
+
+  if (Options.Version):
+    print('\n', Banner)
+    exit()
+
+  print()
+  print('This script compares checksums and byte counts for all files transferred to Exadata.')
+  print('It may be run as many times as you like. No reset is required before rerunning it.')
+  print()
+  print('The input list of files from the source system is:')
+  print('  >', StgCksumFile)
+  print()
+  print('The files checked are listed in the following files:')
+  print('  >', ArcFilename)
+  print('  >', DbFilename)
+  print()
+  print('These file listings are created by the checkfiles script which should be run first.')
+  print()
+  print('The file checksums and bytes are generated by run_checksums and stored in the')
+  print(LogDir + ' directory in files named as {source_filename}.cksum.out')
+  print()
+  
+  if (version_info[0] >= 3):
+    instr = input('Press any key to continue...')
+  else:
+    instr = raw_input('Press any key to continue...')
+
+  try:
+    hStgCksumFile = open(StgCksumFile,'r')
+  except:
+    print('\nCannot open checksum file for read: ' + StgCksumFile)
+    exit(1)
+
+  StgCksumFileContents = hStgCksumFile.readlines()
+  hStgCksumFile.close()
+
+  for line in StgCksumFileContents:
+    pos = line.find('#')
+    if (pos >= 0):     # Comment character found.
+      if (pos > 0):    # Comment isn't at the beginning of the line. (there is something to preserve)
+        line = line[0:pos]
+
+    line = line.strip()
+    if (len(line) > 0):
+      Count = line.count(' ')
+      if (Count >= 1):
+        Cksum = line.split()[0]
+        Bytes = line.split()[1]
+        File  = line.split()[2]
+        StgCksumDict[File] = {'Cksum':Cksum,'Bytes':Bytes}
+      else:
+        print('Invalid record format found in checksum file:', StgCksumFile)
+        exit(1)
+
+  # Read all checksum log files and create a dictionary from the contents.
+  # -----------------------------------------------------------------------
+  # Example: ora_TPBP2_DB_r6pempqt_1_1_854288221_54118_1.cksum.out
+  SearchString = r'^ora_TPBP.*\.cksum.out'
+  Filemask = compile(r'^.*' + SearchString + '.*')
+  for Logfile in listdir(LogDir):
+    if (Filemask.search(Logfile)):
+      FqLogfile = Logfile
+      Logfile = pathjoin(LogDir,Logfile)
+      if (isfile(Logfile)):              # not a directory...
+        try:
+          hLogfile = open(Logfile,'r')
+        except:
+          print('\nCannot open checksum file for read: ' + Logfile)
+          exit(1)
+
+        LogfileContents = hLogfile.readlines()
+        hLogfile.close()
+
+        for line in LogfileContents:
+          pos = line.find('#')
+          if (pos >= 0):    # Comment character found.
+            if (pos > 0):   # Comment isn't at the beginning of the line. (there is something to preserve)
+              line = line[0:pos]
+
+          line = line.strip()
+
+          if (len(line) > 0):
+            Count = line.count(' ')
+            if (Count >= 1):
+              Cksum = line.split()[0]
+              Bytes = line.split()[1]
+              File  = line.split()[2]
+              ExaCksumDict[basename(File)] = {'Cksum':Cksum,'Bytes':Bytes}
+            else:
+              print('Invalid record format found in checksum file:', FqLogFile)
+              exit(1)
+
+  # Compare results
+  # -------------------------
+  for file in sorted(ExaCksumDict.keys()):
+    print('Reconciling checksums for:', file)
+    if (file in StgCksumDict):
+      ExaCksum = ExaCksumDict[file]['Cksum']
+      ExaBytes = ExaCksumDict[file]['Bytes']
+      StgCksum = StgCksumDict[file]['Cksum']
+      StgBytes = StgCksumDict[file]['Bytes']
+      if (ExaCksum != StgCksum):
+        MismatchList.append((file,'Cksum',ExaCksum,StgCksum))
+      if (ExaBytes != StgBytes):
+        MismatchList.append((file,'Bytes',ExaBytes,StgBytes))
+    else:
+      print("File not found")
+      exit(1)
+
+  # Print the results.
+  # ----------------------------------------------------------------
+  print()
+  if (len(MismatchList) == 0):
+    print('All files match on checksum and size.')
+  else:
+    print('The following files do not match the source:')
+    for filespec in MismatchList:
+      print('  > %-60s %8s: %15s <--Exa/Stg--> %-15s' % (filespec[0],filespec[1],filespec[2],filespec[3]))
+
+  exit(0)
+
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------

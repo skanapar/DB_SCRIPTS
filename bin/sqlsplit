@@ -1,0 +1,55 @@
+#!/usr/bin/perl
+
+# Import Modules/Functions
+#--------------------------#
+use File::Basename;
+use File::Path;
+use Getopt::Long;
+use Sys::Hostname;
+use FindBin;
+use Data::Dumper;
+use lib "$FindBin::Bin";
+
+
+# -------------------------------------------#
+#  Main Program                              #
+# -------------------------------------------#
+$Basename   = basename($0);
+$ArgCount   = @ARGV;
+
+($CmdName,$cmdExt) = split('\.', $Basename);
+$Usage = "Usage: " . $Basename . " <input_file>";
+
+if (($ArgCount ne 1) or (($ARGV[0] eq '-?') or ($ARGV[0] eq '-h'))) {
+  print "\n$Usage\n";
+  exit 1;
+}
+
+# Open input file
+$Infile = $ARGV[0];
+open(INPUT_FILE, "<$Infile") || die "Can't open input file for read: $Infile\n";
+
+while ($Line = <INPUT_FILE>) {
+   chomp($Line);
+   next if $Line =~ /^\s*$/;  # skip blank lines
+   push @AllLines, $Line;
+}
+$AllLines = join("\n", @AllLines);
+@AllSQL   = split('\;', $AllLines);
+
+my $i = 1;
+foreach my $SQL (@AllSQL) {
+   $x = $i;
+   $x = "0$x" if ($i < 1000000);
+   $x = "0$x" if ($i < 100000);
+   $x = "0$x" if ($i < 10000);
+   $x = "0$x" if ($i < 1000);
+   $x = "0$x" if ($i < 100);
+   $x = "0$x" if ($i < 10);
+   $Outfile = "$x.sql";
+   print "$Outfile\n";
+   open(OUT_FILE, ">$Outfile");
+   print OUT_FILE "$SQL;";
+   close(OUT_FILE);
+   $i ++;
+}

@@ -1,0 +1,134 @@
+#!/bin/bash
+################################################################################
+#                                                                              #
+#  Script Name: findByteSemTabs                                                #
+#                                                                              #
+#  Description: Monitors databases for BYTE semantics in CHAR & VARCHAR2       #
+#               columns.                                                       #
+#                                                                              #
+#  Input:       findByteSemTabs.conf file contains a list of ORACLE_SID names  #
+#               for the databases to be monitored.                             #
+#  Output:      Report written to stdout & monitorPSBytesSemCol.log            #
+#                                                                              #
+################################################################################
+#                                                                              #
+# MODIFICATION HISTORY:                                                        #
+#                                                                              #
+# Chg Date   Chg  By               SAR Num   Chg Description                   #
+# ---------- ---- ---------------- --------- ----------------------------------#
+#  1/11/2012 1.0  Randy Johnson    None      Created script                    #
+################################################################################
+
+export CMD=`basename $0`
+export HOME_DIR=/Users/Randy/dba
+export ETC_DIR=${HOME_DIR}/etc
+export LOG_DIR=${HOME_DIR}/log
+export TMP_DIR=${HOME_DIR}/tmp
+export LOG_FILE=$LOG_DIR/${CMD}.log
+export SQL_OUT=$TMP_DIR/${CMD}.out
+export TLOG="tee -a $LOG_FILE"
+export CONFIG_FILE=${ETC_DIR}/${CMD}.conf
+typeset -i SEND_REPORT=0
+
+# Delete the $SQL_OUT file if one was left from a previous run.
+rm -f $SQL_OUT
+rm -f $LOG_FILE
+
+echo '================================================================' | $TLOG
+echo 'Report: Tables using BYTE Semantics'                              | $TLOG
+echo '  Host: '`uname -n`                                               | $TLOG
+echo '  Date: '`date '+%b %e %T'`                                       | $TLOG
+echo '================================================================' | $TLOG
+
+# Get the list of ORACLE_SID names (databases) to be monitored.
+while read LINE; do
+  ORACLE_SID=`echo $LINE | cut -d: -f1 | sed 's/^[ \t]*//;s/[ \t]*$//'`
+  PS_FLAG=`echo $LINE | cut -d: -f2 | tr '[:upper:]' '[:lower:]' | sed 's/^[ \t]*//;s/[ \t]*$//'`
+  DIST_LIST=`echo $LINE | cut -d: -f3 | sed 's/^[ \t]*//;s/[ \t]*$//'`
+
+  MAIN_ENV=~/.env/main.env
+  if [ -r $MAIN_ENV ]; then
+     . $MAIN_ENV $ORACLE_SID
+  else
+     echo 'Could not open $MAIN_ENV for read.'
+     echo Exiting with return code: 1
+     exit 1
+  fi
+
+  if [ "$PS_FLAG" = 'ps' ]; then
+    WHERE="(owner in ('SYSADM','PS','PEOPLE') and char_used = 'B' )
+      and ((owner, table_name) not in (select owner, table_name from SYSTEM.NLS_BYTE_EXCEPTIONS))"
+  else
+    WHERE="(owner not in ('SYSTEM','SYS','OUTLN','DBSNMP','APPQOSSYS','TRCANLZR', 
+                          'WMSYS','XDB','DBSNMP','SYSMAN','OLAPSYS')
+     and char_used = 'B' )
+     and ((owner, table_name) not in (select owner, table_name from SYSTEM.NLS_BYTE_EXCEPTIONS))"
+  fi
+  
+  sqlplus -s /nolog<<-EOF >$SQL_OUT 2>&1
+    connect / as sysdba
+    set pagesize 0
+    select 'DBNAME:'||name from v\$database; 
+
+    select 'COUNT:'|| COUNT(*)
+      from (select owner, table_name
+              from dba_tab_columns
+             where $WHERE
+               and table_name not like 'BIN$%'
+             group by owner, table_name);
+EOF
+
+  # Check sqlplus output files for errors
+  ERROR=`egrep -i 'ORA\-|error' $SQL_OUT`
+  if [ -n "$ERROR" ]; then
+    echo '<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< SQL*Plus Error >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>' | $TLOG
+    echo Host:`uname -n`, ORACLE_SID Name: ${ORACLE_SID_NAME}, `date '+%b %e %T'`         | $TLOG
+    echo "$ERROR"                                                                         | $TLOG
+    echo '<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< SQL*Plus Error >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>' | $TLOG
+  else
+    DBNAME=`grep ^DBNAME: $SQL_OUT | cut -f2 -d:`
+    COUNT=`grep  ^COUNT:  $SQL_OUT | cut -f2 -d:`
+  fi
+
+  [ "$COUNT" -gt 0 ] && SEND_REPORT=$SEND_REPORT+1 
+
+  echo "" | $TLOG
+  echo Checking $DBNAME                                      | $TLOG
+  echo '----------------------------------------------------------------' | $TLOG
+
+  sqlplus -s /nolog<<-EOF >$SQL_OUT 2>&1
+    connect / as sysdba
+    set lines      160
+    set pages      150
+    set echo       on
+    set feedback   off
+    col database   format a12
+    col table_name format a30
+    col owner      format a20
+
+    select '$DBNAME' AS DATABASE, owner, table_name
+      from dba_tab_columns
+     where $WHERE
+       and table_name not like 'BIN$%'
+     group by owner, table_name
+     order by owner, table_name;
+EOF
+
+  # Check sqlplus output files for errors
+  ERROR=`egrep -i 'ORA\-|error' $SQL_OUT`
+  if [ -n "$ERROR" ]; then
+    echo '<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< SQL*Plus Error >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>' | $TLOG
+    echo Host:`uname -n`, ORACLE_SID Name: ${ORACLE_SID_NAME}, `date '+%b %e %T'`         | $TLOG
+    echo "$ERROR"                                                                         | $TLOG
+    echo '<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< SQL*Plus Error >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>' | $TLOG
+  fi
+  cat $SQL_OUT | $TLOG
+done < <(cat $CONFIG_FILE | sed 's/^[ \t]*//;s/[ \t]*$//' | grep -v ^# | grep -v ^$)
+
+echo '================================================================' | $TLOG
+echo 'End of Report: '`date '+%b %e %T'`                                | $TLOG
+echo '================================================================' | $TLOG
+
+if [ -n "$DIST_LIST" -a "$SEND_REPORT" -gt 0 ]; then
+  mail -s "Byte Semantics Report from: `hostname`" "$DIST_LIST" <$LOG_FILE
+fi

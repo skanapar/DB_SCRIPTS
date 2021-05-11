@@ -1,0 +1,23 @@
+#for ohdb in `grep -v -E "^#"\|"^\+"\|"^$" /etc/oratab | grep 11 | awk -F: '{print $2":"$1}'`
+for ohdb in `grep -v -E "^#"\|"^\+"\|"^$" /etc/oratab | awk -F: '{print $2":"$1}'`
+do
+  oh=`echo $ohdb | awk -F: '{print $1}'`
+  db=`echo $ohdb | awk -F: '{print $2}'| awk -F_ '{print $1}'`
+  dbs=`echo $ohdb | awk -F: '{print $2}'`
+  echo "ORACLE_HOME=    $oh"
+  echo "Database=       $db"
+  echo "Database_sfx=   $dbs"
+. ~/${db}.env
+
+sqlplus -s / as sysdba <<EOF
+  @/acfs02/dba/sql/set_audit_arc_tstmp
+  @/acfs02/dba/sql/purge_audit_trail
+  @/acfs02/dba/sql/set_audit_purge_job
+  exit
+EOF
+
+  echo "======================================================================="
+  read
+done
+
+

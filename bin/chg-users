@@ -1,0 +1,16 @@
+#for u in `cat local_users | cut -f1 -d:`
+for u in abel.m.macias
+do
+ usermod -G 2010,wheel $u
+ id $u
+ cp dot.bashrc /home/${u}/.bashrc
+ cp dot.bash_profile /home/${u}/.bash_profile
+ chown ${u}:acn-adm /home/${u}/.bash*
+ mkdir /home/${u}/.ssh
+ touch /home/${u}/.ssh/authorized_keys
+ chown -R ${u}:acn-adm /home/${u}/.ssh
+ chmod -R 700 /home/${u}/.ssh
+ usermod -G wheel $u
+ passwd -x 9999 $u
+ echo "========================================="
+done

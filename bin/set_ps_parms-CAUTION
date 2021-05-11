@@ -1,0 +1,8 @@
+#!/bin/bash
+
+sqlplus -s /nolog <<-EOF
+  connect / as sysdba
+  alter system set "_unnest_subquery"              = false scope=both sid='*';
+  alter system set "_gby_hash_aggregation_enabled" = false scope=both sid='*';
+EOF
+

@@ -1,0 +1,12 @@
+#!/bin/bash
+
+crsstat | grep svc | grep `hostname | cut -f1 -d.` | cut -f2,3 -d. |\
+while read SERVICE; do
+   DB=`echo "$SERVICE" | cut -f1 -d.`
+   SVC=`echo "$SERVICE" | cut -f2 -d.`
+   INST=`ps -ef | grep pmon | grep -v grep | grep $DB | awk {' print $8 '} | cut -f3 -d_`
+   echo "srvctl start service -d $DB -i $INST -s $SVC"
+   echo "srvctl enable service -d $DB -i $INST -s $SVC"
+done
+
+

@@ -1,0 +1,18 @@
+select * from dba_obj_audit_opts where 
+ALT <> '-/-'
+or AUD <> '-/-'
+or COM <> '-/-'
+or DEL <> '-/-'
+or GRA <> '-/-'
+or  IND <> '-/-'
+or  INS <> '-/-'
+or  LOC <> '-/-'
+or  REN <> '-/-'
+or  SEL <> '-/-'
+or  UPD <> '-/-'
+or  REF <> '-/-'
+or  EXE <> '-/-'
+or  CRE <> '-/-'
+or  REA <> '-/-'
+or  WRI <> '-/-'
+/

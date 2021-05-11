@@ -1,0 +1,162 @@
+#!/bin/env python
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+from optparse     import OptionParser
+from os           import environ
+from os.path      import basename
+from sys          import argv
+from sys          import exit
+from sys          import version_info
+from signal       import SIGPIPE
+from signal       import SIG_DFL
+from signal       import signal
+from Oracle       import ErrorCheck
+from Oracle       import RunSqlplus
+from Oracle       import SetOracleEnv
+from Oracle       import ParseConnectString
+from Oracle       import FormatNumber
+
+# ------------------------------------------------
+# Imports that are conditional on Python Version.
+# ------------------------------------------------
+if (version_info[0] >= 3):
+  from configparser import SafeConfigParser
+else:
+  from ConfigParser import SafeConfigParser
+# ------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Def : LoadConfig()
+# Desc: Loads configuration file into a list object.
+# Args: ConfigFile = the name of the configuration file.
+# Retn: UserList
+# ---------------------------------------------------------------------------
+def LoadConfig(ConfigFile):
+  Parms = SafeConfigParser()
+  UserDict = {}
+
+  # make the items in the config file case sensitive...
+  # This is important only because of the weird way the MiscParameters section
+  # of the dbca template uses the Options as field delimiters in the XML document.
+  Parms.optionxform = str
+
+  # Load the config file.
+  # -----------------------------
+  try:
+    Parms.read(ConfigFile)
+  except:
+    PrintMessage('error', 'Parsing error in config file: %s\n' % ConfigFile)
+    if(Trace):
+      print('\n%s' % traceback.format_exc())
+    exit(1)
+
+  # Load configuration parameters and merge them with defaults.
+  # ------------------------------------------------------------
+  for Section in sorted(Parms.sections()):
+    Section = Section.upper()
+    for Option in sorted(Parms.options(Section)):
+      Value = Parms.get(Section, Option)
+      Value = Value.strip()
+      if(Section not in UserDict):
+        UserDict[Section] = {}
+      UserDict[Section][Option] = Value
+
+  return(UserDict)
+# ---------------------------------------------------------------------------
+# End LoadConfig()
+# ---------------------------------------------------------------------------
+
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  Cmd            = basename(argv[0]).split('.')[0]
+  CmdDesc        = 'Password Audit'
+  Version        = '4.00'
+  VersionDate    = 'Mon Feb 26 08:30:44 EST 2018'
+  DevState       = 'Production'
+  Banner         = CmdDesc + ': Release ' + Version + ' '  + DevState + '. Last updated: ' + VersionDate
+  SqlHeader      = '/***** ' + CmdDesc.upper() + ' *****/'
+  ErrChk         = False
+  SqlHeader      = '/***** ' + CmdDesc.upper() + ' *****/'
+  Sql            = ''
+  ArgParser      = OptionParser()
+  ConfigFile     = '/home/oracle/dba/etc/' + Cmd + '.cfg'
+  ConnStr        = ''
+
+  ArgParser.add_option('--v', dest='ShowVer', action='store_true', default=False, help="print version info.")
+
+  # Parse command line arguments
+  Options, args = ArgParser.parse_args()
+
+  ShowVer    = Options.ShowVer
+
+  if (ShowVer == True):
+    print('\n%s' % Banner)
+    exit()
+
+  UserDict = LoadConfig(ConfigFile)
+
+  for Username in sorted(UserDict):
+    print('\n[' + Username + ']')
+    for Hash in UserDict[Username]:
+      print('%-30s = %-s' % (Hash, UserDict[Username][Hash]))
+
+  Users = sorted(UserDict)
+  
+  Sql += "set lines 2000\n"
+  Sql += "set timing off\n"
+  Sql += "set time off\n"
+  Sql += "set feedback off\n"
+  Sql += "set echo off\n"
+  Sql += "set pages 0\n"
+  Sql += "\n"
+  Sql += "  SELECT " + SqlHeader + "\n"
+  Sql += "         'USER~' || name || '~' || password\n"
+  Sql += "    FROM sys.user$\n"
+  Sql += "   WHERE name in (\n"
+  Sql += "           '" + "'\n          ,'".join(Users) + "');"
+
+  print(Sql)
+   
+  ## Check/setup the Oracle environment
+  #if (not('ORACLE_SID' in list(environ.keys()))):
+  #  print('ORACLE_SID is required.')
+  #  exit(1)
+  #else:
+  #  # Set the ORACLE_HOME just in case it isn't set already.
+  #  if (not('ORACLE_HOME' in list(environ.keys()))):
+  #    (OracleSid, OracleHome) = SetOracleEnv(environ['ORACLE_SID'])
+  #
+  ## Parse the connect string if any, prompt for username, password if needed.
+  #if (len(args) > 0 and Show == False):
+  #  InStr = args[0]
+  #  ConnStr = ParseConnectString(InStr)
+  #
+  ## Execute the report
+  #if (ConnStr != ''):
+  #  (Stdout) = RunSqlplus(Sql, ErrChk, ConnStr)
+  #else:
+  #  (Stdout) = RunSqlplus(Sql, ErrChk)
+  #
+  #Stdout = Stdout.strip()
+  #ComponentList = ['sqlplus','rdbms', 'oracore']
+  #(rc, ErrorList) = ErrorCheck(Stdout, ComponentList)
+  #
+  #if (rc != 0):
+  #  print(Stdout)
+  #  exit(rc)
+  #else:
+  #  for line in sorted(Stdout.split('\n')):
+  #    if (line[0:5] == 'USER~'):
+  #      (Username, Password) = line[5:].split('~')
+  #      for rec in UserList()
+
+
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------

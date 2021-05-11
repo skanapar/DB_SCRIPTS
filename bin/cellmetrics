@@ -1,0 +1,170 @@
+#!/bin/env python
+
+##################################################################################################
+#  Name:        cellmetrics                                                                      #
+#  Author:      Randy Johnson                                                                    #
+#  Description: Parses Cell Metrics history files from Exadata Storage cells. These files        #
+#               contain archived cell metrics in XML format. They are located in the directory:  #
+#               /opt/oracle/cell/cellsrv/deploy/config/metrics in each storage. The end-goal for #
+#               this script is to transfer the gzip XML files from each storage cell, load,      #
+#               parse, and report the contents of the files. Output formats will include CSV,    #
+#               HTML, and text.                                                                  #
+#                                                                                                #
+#               Each gzipped metrics file contains an hour's worth (60 samples) of metrics for   #
+#               a storage cell.                                                                  #
+#                                                                                                #
+#  Usage: CellMetrics [Options]                                                                  #
+#                                                                                                #
+#  options:                                                                                      #
+#    -h, --help     Show this help message and exit                                              #
+#    -t --type      Report type (text, html, csv)                                                #
+#    -o --outfile   Output file name                                                             #
+#    -v             version                                                                      #
+#                                                                                                #
+# History:                                                                                       #
+#                                                                                                #
+# Date       Ver. Who              Change Description                                            #
+# ---------- ---- ---------------- ------------------------------------------------------------- #
+# 12/08/2013 1.00 Randy Johnson    Initial release. Parses a single uncompressed file.           #
+# 12/09/2013 1.01 Randy Johnson    Uncompresses and parses all files found in the subdirectories.#
+#                                                                                                #
+# Todo's                                                                                         #
+#  - None at this time.                                                                          #
+#                                                                                                #
+# Wish List:                                                                                     #
+#  - None at this time.                                                                          #
+##################################################################################################
+
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+import               gzip
+from datetime        import datetime
+from sys             import exit
+from sys             import argv
+from sys             import stdout
+from sys             import path
+from sys             import version_info
+from optparse        import OptionParser
+from os              import listdir
+from os.path         import basename
+from os.path         import isfile
+from os.path         import join as pathjoin
+from xml.sax         import make_parser
+from xml.sax.handler import ContentHandler
+from xml.sax         import parse
+from xml.sax         import parseString
+
+
+# --------------------------------------
+# ---- Function & Class Definitions ----
+# --------------------------------------
+# Def : XMLHandler()
+# Desc: Parses the XML cell metrics file.
+# Args:
+# Retn:
+#---------------------------------------------------------------------------
+class XMLHandler(ContentHandler):
+  def __init__(self):
+    self.XmlDict     = {}
+    self.XmlDoD      = {}
+    self.AttrList    = []
+    self.TargetKey   = ''
+
+  def _getCharacterData(self):
+    data = ''.join(self._charBuffer).strip()
+    self._charBuffer = []
+    return data.strip()  # remove strip() if whitespace is important
+
+  def parse(self, f):
+    ###~ print('parse')
+    parse(f, self)
+    return self.XmlDoD
+
+  def parseString(self, f):
+    ###~ print('parseString')
+    parseString(f, self)
+    return self.XmlDoD
+
+  def startElement(self, name, attrs):
+    ###~ print('startElement')
+
+    # --<Target TYPE="oracle.ossmgmt.ms.core.MSMetric" NAME="CD_BY_FC_DIRTY" KEY="1386525503_CD_BY_FC_DIRTY_CD_00_ENKCEL04">
+    if name == 'Target':
+      self.TargetKey = attrs.get('KEY')
+      self.XmlDoD[self.TargetKey] = {'TargetName' : attrs.get('NAME'), 'TargetType' : attrs.get('TYPE')}
+
+    # --<Attribute NAME="metricValue" VALUE="0.0"
+    if name == 'Attribute':
+      self.XmlDoD[self.TargetKey].update({attrs.get('NAME') : attrs.get('VALUE')})
+# End XMLHandler()
+
+# --------------------------------------
+# -- End Function & Class Definitions --
+# --------------------------------------
+
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  Interactive   = stdout.isatty()
+  Cmd           = basename(argv[0])
+  CmdPrefix     = Cmd.split('.')[0]
+  CmdDesc       = 'Cell Metrics'
+  HomeDir       = path[0]
+  Version       = '1.00'
+  Parser        = make_parser()
+  StartingDir   = '/Users/Randy/work'
+  CellList      = ['enkcel04','enkcel05','enkcel06','enkcel07']
+  HistDir       = '/opt/oracle/cell/cellsrv/deploy/config/metrics'
+  HistPrefix    = 'metrics_'
+  HistPostfix   = '.gz'
+  HistPathList  = []
+  MetricsDict   = {}
+
+  # Process command line options
+  # ----------------------------------
+  ArgParser = OptionParser()
+  ArgParser.add_option("-t",                      dest="Type",          default='text',            type=str, help="Report type (text, html, csv)",                metavar='Type'       )
+  ArgParser.add_option("-o",                      dest="OutFilename",   default='cellmetrics.out', type=str, help="Report file name (cellmetrics.out)",           metavar='OutFilename')
+  ArgParser.add_option("-v", action="store_true", dest="PrintVersion",  default=False,                       help="report properly provisioned resources as well"                      )
+
+  Options, args = ArgParser.parse_args()
+
+  Now = datetime.now()
+  print('\n============================================================================================================================')
+  print('%s: Release %s Development - Cell Metrics Utility for Oracle Exadata %43s' % (CmdDesc, Version, Now.strftime("%Y-%m-%d %H:%M")))
+  print('============================================================================================================================')
+
+  print('Processing Cell Metric History files:')
+  for Cell in CellList:
+    for Filename in listdir(StartingDir + '/' + Cell):
+      Filename = pathjoin(StartingDir, Cell, Filename)
+      if isfile(Filename):
+        HistPathList.append(Filename)
+        print(Filename)
+        gzf = gzip.open(Filename, 'rb')
+        FileContents = gzf.read()
+        gzf.close()
+
+        # Load up the XML file.
+        # -------------------------------------------------------
+        XmlDict = {}
+        XmlDict = XMLHandler().parseString(FileContents)
+        MetricsDict.update(XmlDict)
+
+  print('\n\nmetricObjectName                                    collectionTime  metricObjectName           metricValue')
+  print('--------------------------------------------------  --------------  -------------------------  -----------------------------')
+  for TargetKey in list(MetricsDict.keys()):
+    print('%-50s  %-14s  %-25s  %-20s' % (MetricsDict[TargetKey]['metricObjectName'], MetricsDict[TargetKey]['collectionTime'], MetricsDict[TargetKey]['TargetName'], MetricsDict[TargetKey]['metricValue']))
+  Now = datetime.now()
+  print('============================================================================================================================')
+  print(('End of Report                                                                   %44s' % (Now.strftime("%Y-%m-%d %H:%M"))))
+  print('============================================================================================================================')
+
+  exit(0)
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------

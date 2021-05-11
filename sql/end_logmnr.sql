@@ -1,0 +1,1 @@
+EXECUTE DBMS_LOGMNR.end_logmnr;

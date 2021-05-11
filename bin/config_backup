@@ -1,0 +1,277 @@
+#!/bin/env python
+
+##################################################################################################
+#  Name:        config_backup                                                                    #
+#  Author:      Randy Johnson                                                                    #
+#  Description: Configures backup user account used by CommVault                                 #
+#                                                                                                #
+#  Input Parms: -s(id)         ORACLE_SID. Not required if ORACLE_SID environment variable is    #
+#                              exported.                                                         #
+#               -ch(eck        Check the current configuration.                                  #
+#               -co(nfigure)   create the cvbk database account. Executes the following...       #
+#                              SQL> create user cvbk identified by "backMeUp1'                   #
+#                              SQL> grant create session                to cvbk;                 #
+#                              SQL> grant sysdba, alter system          to cvbk;                 #
+#                              SQL> grant select on SYS.V_$DATABASE     to cvbk;                 #
+#                              SQL> grant select on SYS.V_$DATAFILE     to cvbk;                 #
+#                              SQL> grant select on SYS.DBA_TABLESPACES to cvbk;                 #
+#                              SQL> grant select on SYS.V_$ARCHIVE_DEST to cvbk;                 #
+#               -u(nconfigure) Drop's the cvbk database user account "drop user cvbk cascade".   #
+#               -h(elp)        Displays the Usage message.                                       #
+#               -v(ersion)     Displays version information.                                     #
+#                                                                                                #
+#  Return Code: > 0 indicates failure.                                                           #
+#                                                                                                #
+##################################################################################################
+# MODIFICATION HISTORY:                                                                          #
+#                                                                                                #
+# Date       Ver  Who              Change Description                                            #
+# ---------- ---- ---------------- --------------------------------------------------            #
+# 11/27/2012 1.00 Randy Johnson    Rewritten in Python. Added help messages for failed checks.   #
+##################################################################################################
+
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+from optparse   import OptionParser
+from os         import environ
+from os         import listdir
+from os         import path
+from os         import statvfs
+from re         import match
+from re         import search
+from signal     import SIGPIPE
+from signal     import SIG_DFL
+from signal     import signal
+from subprocess import PIPE
+from subprocess import Popen
+from subprocess import STDOUT
+from sys        import argv
+from sys        import exit
+from Oracle     import LoadOratab, SetOracleEnv, GetDbState, GetDbName, GetDbUniqueName
+
+# --------------------------------------
+# ---- Function Definitions ------------
+# --------------------------------------
+
+# ---------------------------------------------------------------------------
+# Def GetDbName()
+# Desc: Get the database name from v$database
+# Args: $0 is the database connect string
+# Retn: Database Name
+# ---------------------------------------------------------------------------
+def GetDbName() {
+  my $rc    = 0;
+  my $DbName;
+  my $SqlOut;
+  my $ErrorMsg;
+  my $DBID;
+
+   if ($Trace) {
+      print "TRACE: Entering sub GetDbName()\n";
+      print "TRACE: Parameters:\n";
+      print "TRACE:    \$ConnectString = $ConnectString\n";
+   }
+
+   my $DbName;
+   ($rc, $ErrorMsg, $SqlOut) = RunSqlplus($DbConnStr, "SELECT 'DBNAME:' || NAME ||':'|| DBID FROM V\$DATABASE");
+
+   if ($rc) {
+     PrintError($ErrorMsg);
+     exit $rc;
+   }
+
+   foreach my $Line (split('\n',$SqlOut)) {
+      if ($Line =~ m/^DBNAME:/) {
+         ($junk, $DbName, $DBID) = split(':', $Line);
+         last;
+      }
+   }
+
+   if ($Trace) {
+      print "TRACE: Exiting sub GetDbName(\$)\n";
+      print "TRACE: Returning: \$rc      = $rc\n";
+      print "TRACE:            \$DbName  = $DbName\n";
+   }
+   return $DbName, $DBID;
+}
+# ---------------------------------------------------------------------------
+# End GetDbName()
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Def GetDbUniqueName()
+# Desc: Get the database unique name from v$parameter
+# Args: $0 is the database connect string
+# Retn: Database Unique Name
+# ---------------------------------------------------------------------------
+sub GetDbUniqueName($) {
+
+   if ($Trace) {
+      print "TRACE: Entering sub GetDbUniqueName(\$)\n";
+      print "TRACE: Parameters:\n";
+      print "TRACE:    \$ConnectString = $ConnectString\n";
+   }
+
+   my $DbUniqueName;
+
+   (my $rc, my $ErrorMsg, my $SqlOut) = RunSqlplus($DbConnStr, "SELECT 'DBUNIQUE:' || DB_UNIQUE_NAME ||':'|| DBID FROM V\$DATABASE");
+
+   foreach my $Line (split('\n',$SqlOut)) {
+      if ($Line =~ m/^DBUNIQUE:/) {
+         ($junk, $DbUniqueName, $DbID) = split(':', $Line);
+         last;
+      }
+   }
+
+   if ($Trace) {
+      print "TRACE: Exiting sub GetDbUniqueName(\$)\n";
+      print "TRACE: Returning: \$rc           = $rc\n";
+      print "TRACE:            \$DbUniqueName = $DbUniqueName\n";
+      print "TRACE:            \$DbID         = $DbID\n";
+   }
+   return ($rc, $DbUniqueName, $DbID);
+}
+# ---------------------------------------------------------------------------
+# End GetDbUniqueName()
+# ---------------------------------------------------------------------------
+
+# --------------------------------------
+# ---- End Function Definitions --------
+# --------------------------------------
+
+
+
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):      # if this is true, then this script is *not* being imported by another Python script.
+  Cmd               = path.split(argv[0])[1]
+  Version           = '1.0'
+  Banner            = 'Configure Backups, Release ' + Version + ' Development on Tue Nov 27 08:00:00 2012'
+  argc              = len(argv)
+  OratabFile        = '/etc/oratab'
+  CatalogConnStr    = 'rman/r0cketMan@rmltr01'
+
+  Usage  = '\n\nUsage: ' + Cmd + ' [-s(id) ORACLE_SID] [-co(nfigure) -ch(eck) -u(nconfigure -r(egister) -unr(egister) -veri(fycatalog) -h(elp) -vers(ion)]'
+  Usage += '\nWhere: -s(id)           = ORACLE_SID'
+  Usage += '\n       -co(onfigure)    = Configure the user account for CommVault.'
+  Usage += '\n       -ch(eck)         = Verify the current configuration.'
+  Usage += '\n       -unc(onfigure)   = Drops the CVBK user account (cascade).'
+  Usage += '\n       -r(egister)      = Registers the database with the recovery catalog.'
+  Usage += '\n       -unr(egister)    = Removes the database from the recovery catalog.'
+  Usage += '\n       -veri(fycatalog) = Verifies the registration status of the database in the recovery catalog.'
+  Usage += '\n       -vers(ion)       = Prints version information.'
+  Usage += '\n       -h(elp)          = Prints this message.\n'
+  Usage += '\nExamples:'
+  Usage += '\n       ' + Cmd
+  Usage += '\n       ' + Cmd + '--configure --register'
+  Usage += '\n       ' + Cmd + '-s mydb --unconfigure'
+  Usage += '\n       ' + Cmd + '-s mydb --unregister'
+  Usage += '\n       ' + Cmd + '-s mydb --unconfigure -unregister'
+  Usage += '\n       ' + Cmd + '-s mydb --check'
+  Usage += '\n       ' + Cmd + '-s mydb --verify'
+  Usage += '\n       ' + Cmd + '--sid --check --verify'
+  Usage += '\n       ' + Cmd + '-h'
+  Usage += '\n       ' + Cmd + '--vers'
+
+  Sid            = ''
+  CheckConfig    = False
+  Configure      = False
+  Register       = False
+  Unconfigure    = False
+  Unregister     = False
+  Trace          = False
+  VerifyCatalog  = False
+  Version        = False
+
+  parser = OptionParser(Usage)
+  parser.add_option('-s','--sid',                                 dest="Sid",           default='',    type=str, help="ORACLE_SID")
+  parser.add_option('','--check',       action="store_true",      dest="CheckConfig",   default=False,           help="Check backup configuration")
+  parser.add_option('','--configure',   action="store_true",      dest="Configure",     default=False,           help="Configure backup")
+  parser.add_option('','--register',    action="store_true",      dest="Register",      default=False,           help="Register database in recovery catalog")
+  parser.add_option('','--unconfigure', action="store_true",      dest="Unconfigure",   default=False,           help="Unconfigure backup")
+  parser.add_option('','--unregister',  action="store_true",      dest="Unregister",    default=False,           help="Unregister database from recovery catalog")
+  parser.add_option('','--trace',       action="store_true",      dest="Trace",         default=False,           help="Print trace information (for debugging purposes)")
+  parser.add_option('','--verify',      action="store_true",      dest="VerifyCatalog", default=False,           help="Verify catalog registration")
+  parser.add_option('','--version',     action="store_true",      dest="Version",       default=False,           help="Print version information")
+  Option, Args = parser.parse_args()
+  Argc = len(Args)
+
+  # For handling termination in stdout pipe.
+  #  ex. when you run: oerrdump | head
+  #--------------------------------------------
+  signal(SIGPIPE, SIG_DFL)
+
+  # Process command line options
+  # ----------------------------------
+  Usage = 'parms [options] [parm_filter]'
+  argc = len(argv)
+  argv.pop(0)
+
+  if ('version' in argv):
+    print('\n%s' % Banner)
+    exit(0)
+
+  if (Option.Register and Option.Unregister):
+    print('\n--register and --unregister may not be used at the same time.\n')
+    print(Usage)
+    exit(1)
+
+  if (Option.Configure and Option.Unconfigure):
+    print('\n--configure and --unconfigure may not be used at the same time.\n')
+    print(Usage)
+    exit(1)
+
+  # Set default behavior.
+  junk = (Option.CheckConfig + Option.Configure + Option.Unconfigure + Option.Register + Option.Unregister + Option.VerifyCatalog)
+  if (junk == 0):
+    del(junk)
+    Option.CheckConfig   = True
+    Option.VerifyCatalog = True
+
+  if (Option.Sid != ''):
+    OracleSid = Option.Sid
+  else:
+    if ('ORACLE_SID' in list(environ.keys())):
+      OracleSid  = environ['ORACLE_SID']
+    else:
+      print('\nYou must specify an ORACLE_SID with the -(s)id option or export');
+      print('\n$ORACLE_SID before running this command.');
+      exit(1)
+
+  rc = 0
+  LoadOratab(OratabFile)
+  (OracleSid, OracleHome) = SetOracleEnv(OracleSid)
+  if (not OracleHome):
+    print('\nError setting ORACLE_HOME using ORACLE_SID=' + OracleSid + '. This')
+    print('is likely due to a lookup failure in the oratab file.')
+  else:
+    Sqlplus  = OracleHome + '/bin/sqlplus'
+    Rman     = OracleHome + '/bin/rman'
+
+  if ((Option.CheckConfig) or (Option.Configure)  or (Option.Unconfigure) or\
+      (Option.Register)    or (Option.Unregister) or (Option.VerifyCatalog)):
+      # Check the run state of the database.
+      # ------------------------------------
+    DbState = GetDbState()
+      
+    (DbName, DBID) = GetDbName();
+    #
+    #printf "\nConnected to  : %s, %s\n", $DbName, $DBID;
+    #printf "Database is   : %s\n", $DbState;
+
+  #  RCV = 'connect catalog ' + CatalogConnStr + '\n'
+  #  RCV += "exit;" + '\n'
+  #
+  #  (Stdout) = RunRman(RCV)
+  #  for line in Stdout.split('\n'):
+  #    print line
+  #exit(rc)
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------
+

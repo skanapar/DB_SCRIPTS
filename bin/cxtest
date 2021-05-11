@@ -1,0 +1,46 @@
+#!/bin/env python
+
+##################################################################################################
+#  Name:        cxtest                                                                           #
+#  Author:      Randy Johnson                                                                    #
+#  Description: Test script for demonstrating the features of cx_Oracle.                         #
+#  Usage:       cxtest [options]                                                                 #
+#  Options:                                                                                      #
+#    -h, --help  show this help message and exit                                                 #
+#    -v          print version info.                                                             #
+#                                                                                                #
+# History:                                                                                       #
+#                                                                                                #
+# Date       Ver. Who              Change Description                                            #
+# ---------- ---- ---------------- ------------------------------------------------------------- #
+# 03/06/2015 1.00 Randy Johnson    Initial write.                                                #
+##################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+import cx_Oracle
+import sys
+
+
+# Connect Modes
+# ---------------------
+
+# Simple connect using the tns name. 
+connection = cx_Oracle.connect('system/oracle@orcl')
+
+
+# Exception Handling
+# ---------------------
+import sys
+
+connection = cx_Oracle.connect('system/oracle@orcl')
+cursor = connection.cursor()
+
+try:
+  cursor.execute('select 1 / 0 from dual')
+except cx_Oracle.DatabaseError as xxx_todo_changeme:
+  sys.exc_info() = xxx_todo_changeme
+  error, = exc.args
+  print('Oracle-Error-Code   : %s' % (error.code,    file=sys.stderr))
+  print('Oracle-Error-Message: %s' % (error.message, file=sys.stderr))

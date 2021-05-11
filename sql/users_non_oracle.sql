@@ -1,0 +1,13 @@
+col USERNAME for a30
+col DEFAULT_TABLESPACE for a20
+col ACCOUNT_STATUS for a20
+col TEMPORARY_TABLESPACE for a20
+set linesize 200
+set pagesize 100
+
+select USERNAME,DEFAULT_TABLESPACE,TEMPORARY_TABLESPACE,ACCOUNT_STATUS
+from dba_users
+where ORACLE_MAINTAINED='N'
+order by 1
+/
+

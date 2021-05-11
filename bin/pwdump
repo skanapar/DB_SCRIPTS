@@ -1,0 +1,47 @@
+#!/usr/bin/perl
+
+##################################################################################################
+#  Name:        pwdump                                                                           #
+#  Author:      Randy Johnson                                                                    #
+#                                                                                                #
+# History:                                                                                       #
+#                                                                                                #
+# Date       Ver. Who              Change Description                                            #
+# ---------- ---- ---------------- ------------------------------------------------------------- #
+# 10/13/2013 1.00 Randy Johnson    Initial release.                                              #
+##################################################################################################
+
+use MIME::Base64;
+
+$PassFile='/home/oracle/dba/etc/.passwd';
+
+open(PASSWORD_FILE, "<", $PassFile) or die "Can't open PASSWORD_FILE for read: $PassFile\n";
+printf "\n%-30s %-30s %-30s\n", 'Host/Db/Service', 'Username', 'Password';
+printf "%-30s %-30s %-30s\n", '------------------------------', '------------------------------', '------------------------------';
+while (my $Line = <PASSWORD_FILE>) {
+   chomp($Line);
+
+   # Skip blank and commented lines.
+   # ---------------------------------
+   if ( $Line =~ m/^$DbName\.*/ ) {
+      if ( $Trace) {
+         print "TRACE: Password Line: $Line\n";
+      }
+      (my $pwDbname, my $pwUsername, my $pwUserpass) = split(':', $Line);
+
+      # Remove leading/trailing spaces from dbname, username, and password.
+      # ---------------------------------------------------------------------
+      $pwDbname   =~ s/^\s+//;
+      $pwDbname   =~ s/\s+$//;
+      $pwUsername =~ s/^\s+//;
+      $pwUsername =~ s/\s+$//;
+      $pwUserpass =~ s/^\s+//;
+      $pwUserpass =~ s/\s+$//;
+
+      # Decrypt the username.
+      # -----------------------
+      $pwUserpass = decode_base64($pwUserpass);
+
+      printf "%-30s %-30s %-30s\n", $pwDbname, $pwUsername, $pwUserpass;
+   }
+}

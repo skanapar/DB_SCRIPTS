@@ -1,0 +1,1033 @@
+#!/bin/env python
+
+
+###################################################################################################
+# Name:         partadd                                                                           #
+# Author:       Randy Johnson                                                                     #
+# Description:  Add new table partition (create new tablespace if necessary.                      #
+# Dependencies: Oracle client including sqlplus.                                                  #
+#                                                                                                 #
+# History:                                                                                        #
+#                                                                                                 #
+# Date       Ver. Who              Change Description                                             #
+# ---------- ---- ---------------- -------------------------------------------------------------- #
+# 08/10/2016 1.00 Randy Johnson    Initial release.                                               #
+###################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+import traceback
+import sys
+from datetime     import datetime
+from datetime     import timedelta
+from datetime     import date
+from optparse     import OptionParser
+from os           import environ
+from os.path      import basename
+from os.path      import join as pathjoin
+from re           import search, compile
+from sys          import argv
+from sys          import exit
+from sys          import version_info
+from sys          import stdout
+from signal       import SIGPIPE
+from signal       import SIG_DFL
+from signal       import signal
+from socket       import gethostname
+from subprocess   import Popen
+from subprocess   import PIPE
+from subprocess   import STDOUT
+from Oracle       import IsExecutable
+from Oracle       import IsReadable
+from Oracle       import Logger
+from Oracle       import RunSqlplus
+from Oracle       import SetOracleEnv
+from Oracle       import PrintError
+from Oracle       import ParseConnectString
+from Oracle       import GetParameter
+from calendar     import isleap
+
+
+# ---------------------------------------------------------------------------
+# Def : ObjectExists()
+# Desc: Checks for existance of object by owner, by type, by name.
+# Args: Owner, Type, Name
+# Retn: True/False
+# ---------------------------------------------------------------------------
+def ObjectExists(Owner, Type, Name):
+
+  Sql  = "set heading  off\n"
+  Sql += "set pagesize 0\n"
+  Sql += "set feedback off\n"
+  Sql += "set echo     off\n"
+  Sql += "\n"
+  Sql += "SELECT " + SqlHeader + "\n"
+  Sql += "       count(*)\n"
+  Sql += "  FROM dba_objects\n"
+  Sql += " WHERE owner = '" + Owner + "'\n"
+  Sql += "   AND object_type = '" + Type.upper() + "'\n"
+  Sql += "   AND object_name = '" + Name + "';"
+
+  if (ConnStr != ''):
+    (rc, Stdout, ErrorList) = RunSqlplus(Sql, True, ConnStr)
+  else:
+    (rc, Stdout, ErrorList) = RunSqlplus(Sql, True)
+
+  if (rc == True) :
+    PrintError(Sql, Stdout, ErrorList)
+    exit(1)
+
+  if (Stdout.strip() == '1') :
+    return(True)
+  else:
+    return(False)
+# ---------------------------------------------------------------------------
+# End ObjectExists()
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Def : TablespaceExists()
+# Desc: Checks for existance of a tablespace.
+# Args: Tablespace_Name
+# Retn: True/False
+# ---------------------------------------------------------------------------
+def TablespaceExists(Name):
+
+  Sql  = "set heading  off\n"
+  Sql += "set pagesize 0\n"
+  Sql += "set feedback off\n"
+  Sql += "set echo     off\n"
+  Sql += "\n"
+  Sql += "SELECT " + SqlHeader + "\n"
+  Sql += "       count(*)\n"
+  Sql += "  FROM dba_tablespaces\n"
+  Sql += " WHERE tablespace_name = '" + Name + "';"
+
+  if (ConnStr != ''):
+    (rc, Stdout, ErrorList) = RunSqlplus(Sql, True, ConnStr)
+  else:
+    (rc, Stdout, ErrorList) = RunSqlplus(Sql, True)
+
+  if (rc == True) :
+    PrintError(Sql, Stdout, ErrorList)
+    exit(1)
+
+  if (Stdout.strip() == '1') :
+    return(True)
+  else:
+    return(False)
+# ---------------------------------------------------------------------------
+# End TablespaceExists()
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Def : GetTbspFreespace()
+# Desc: Checks for existance of object by owner, by type, by name.
+# Args: Owner, Type, Name
+# Retn: True/False
+# ---------------------------------------------------------------------------
+def GetTbspFreespace(Name):
+  rc = 0
+
+  Sql  = "set heading  off\n"
+  Sql += "set pagesize 0\n"
+  Sql += "set feedback off\n"
+  Sql += "set echo     off\n"
+  Sql += "\n"
+  Sql += "  SELECT " + SqlHeader + "\n"
+  Sql += "         trunc(sum(bytes)/1024/1024)\n"
+  Sql += "    FROM dba_free_space\n"
+  Sql += "   WHERE tablespace_name = '" + Name + "'\n"
+  Sql += "GROUP BY tablespace_name;"
+
+  if (ConnStr != ''):
+    (rc, Stdout, ErrorList) = RunSqlplus(Sql, True, ConnStr)
+  else:
+    (rc, Stdout, ErrorList) = RunSqlplus(Sql, True)
+
+  if (rc != 0) :
+    PrintError(Sql, Stdout, ErrorList)
+    exit(1)
+
+  return(rc, Stdout.strip())
+# ---------------------------------------------------------------------------
+# End GetTbspFreespace()
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Def : GetTables()
+# Desc: Retrieves a list of tables belonging to OWNER
+# Args: Owner
+# Retn: List of tables
+# ---------------------------------------------------------------------------
+def GetTables(Owner, Filter='EXCH_'):
+  TabList = []
+
+  Sql  = "set heading  off\n"
+  Sql += "set pagesize 0\n"
+  Sql += "set feedback off\n"
+  Sql += "set echo     off\n"
+  Sql += "\n"
+  Sql += "  SELECT " + SqlHeader + "\n"
+  Sql += "         table_name\n"
+  Sql += "    FROM dba_tab_partitions\n"
+  Sql += "   WHERE table_owner = '" + Owner + "'\n"
+  if (Filter != ''):
+    Sql += "     AND table_name not like '" + Filter.upper() + "%'\n"
+  Sql += "GROUP BY table_name\n"
+  Sql += "ORDER BY table_name;"
+
+  if (ConnStr != ''):
+    (rc, Stdout, ErrorList) = RunSqlplus(Sql, True, ConnStr)
+  else:
+    (rc, Stdout, ErrorList) = RunSqlplus(Sql, True)
+
+  if (rc == True) :
+    PrintError(Sql, Stdout, ErrorList)
+    exit(1)
+
+  if (rc != 0):
+    print("\nError Processing GetTableDef SQL")
+    print("------------------------------------------------------------------------------")
+    print(Sql)
+    print("------------------------------------------------------------------------------")
+    PrintError(rc, Stdout, ErrorList)
+    return(1, TabList)
+
+  for line in Stdout.split('\n'):
+    if (line != ''):
+      TabList.append(line)
+
+  return(rc, TabList)
+# ---------------------------------------------------------------------------
+# End GetTables()
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Def : GetPartDef()
+# Desc: Retrieves a dictionary of partition attributes for the partition in
+#       the highest position.
+# Args: Owner, Name
+# Retn: Dictinary of partition attributes.
+# ---------------------------------------------------------------------------
+def GetPartDef(Owner, Table):
+  PartDict = {}
+
+  Sql  = "set heading  off\n"
+  Sql += "set colsep   " + Colsep + "\n"
+  Sql += "set pagesize 0\n"
+  Sql += "set linesize 32767\n"
+  Sql += "set feedback off\n"
+  Sql += "set echo     off\n"
+  Sql += "set long     10000\n"
+  Sql += "column high_value format a3000"
+  Sql += "\n"
+  Sql += "    WITH " + SqlHeader + "\n"
+  Sql += "         MAXPOS AS (\n"
+  Sql += "                    SELECT MAX(partition_position) AS partpos\n"
+  Sql += "                      FROM dba_tab_partitions\n"
+  Sql += "                     WHERE table_owner = '" + Owner + "'\n"
+  Sql += "                       AND table_name = '" + Table + "'\n"
+  Sql += "                   )\n"
+  Sql += "  SELECT " + SqlHeader + "\n"
+  Sql += "         table_name\n"
+  Sql += "        ,partition_position\n"
+  Sql += "        ,partition_name\n"
+  Sql += "        ,tablespace_name\n"
+  Sql += "        ,pct_free\n"
+  Sql += "        ,pct_used\n"
+  Sql += "        ,ini_trans\n"
+  Sql += "        ,max_trans\n"
+  Sql += "        ,logging\n"
+  Sql += "        ,compression\n"
+  Sql += "        ,compress_for\n"
+  Sql += "        ,buffer_pool\n"
+  Sql += "        ,flash_cache\n"
+  Sql += "        ,cell_flash_cache\n"
+  Sql += "        ,logging\n"
+  Sql += "        ,high_value\n"
+  Sql += "    FROM dba_tab_partitions\n"
+  Sql += "        ,maxpos\n"
+  Sql += "   WHERE table_owner = '" + Owner + "'\n"
+  Sql += "     AND table_name = '" + Table + "'\n"
+  Sql += "     AND partition_position = maxpos.partpos;"
+
+  if (ConnStr != ''):
+    (rc, Stdout, ErrorList) = RunSqlplus(Sql, True, ConnStr)
+  else:
+    (rc, Stdout, ErrorList) = RunSqlplus(Sql, True)
+
+  if (rc != 0) :
+    PrintError(Sql, Stdout, ErrorList)
+    exit(1)
+
+  if (rc != 0):
+    print("\nError Processing GetPartDef SQL")
+    print("------------------------------------------------------------------------------")
+    print(Sql)
+    print("------------------------------------------------------------------------------")
+    PrintError(rc, Stdout, ErrorList)
+    return(1, PartDict)
+
+  for line in Stdout.split('\n'):
+    if ((line != '') and (line.count(Colsep) == 15)):
+      PartDict['TABLE_NAME']         = Stdout.split(Colsep)[0].strip()
+      PartDict['PARTITION_POSITION'] = Stdout.split(Colsep)[1].strip()
+      PartDict['PARTITION_NAME']     = Stdout.split(Colsep)[2].strip()
+      PartDict['TABLESPACE_NAME']    = Stdout.split(Colsep)[3].strip()
+      PartDict['PCT_FREE']           = Stdout.split(Colsep)[4].strip()
+      PartDict['PCT_USED']           = Stdout.split(Colsep)[5].strip()
+      PartDict['INI_TRANS']          = Stdout.split(Colsep)[6].strip()
+      PartDict['MAX_TRANS']          = Stdout.split(Colsep)[7].strip()
+      PartDict['LOGGING']            = Stdout.split(Colsep)[8].strip()
+      PartDict['COMPRESSION']        = Stdout.split(Colsep)[9].strip()
+      PartDict['COMPRESS_FOR']       = Stdout.split(Colsep)[10].strip()
+      PartDict['BUFFER_POOL']        = Stdout.split(Colsep)[11].strip()
+      PartDict['FLASH_CACHE']        = Stdout.split(Colsep)[12].strip()
+      PartDict['CELL_FLASH_CACHE']   = Stdout.split(Colsep)[13].strip()
+      PartDict['LOGGING']            = Stdout.split(Colsep)[14].strip()
+      PartDict['HIGH_VALUE']         = Stdout.split(Colsep)[15].strip()
+    else:
+      print("\nInvalid results from GetPartDef SQL")
+      print("------------------------------------------------------------------------------")
+      print(line.split(Colsep))
+      print("------------------------------------------------------------------------------")
+      return(1, PartDict)
+
+  return(rc, PartDict)
+# ---------------------------------------------------------------------------
+# End GetPartDef()
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Def : GenTbspDDL()
+# Desc: Retrieves a dictionary of a table's partitions.
+# Args: Owner, Name
+# Retn: List of partitions.
+# ---------------------------------------------------------------------------
+def GenTbspDDL(Model, Name):
+  Sql  = "set heading  off\n"
+  Sql += "set colsep   " + Colsep + "\n"
+  Sql += "set pagesize 0\n"
+  Sql += "set linesize 32767\n"
+  Sql += "set feedback off\n"
+  Sql += "set echo     off\n"
+  Sql += "set long     10000\n"
+  Sql += "\n"
+  Sql += "SELECT " + SqlHeader + "\n"
+  Sql += "       BLOCK_SIZE"               + " || '" + Colsep + "' ||\n"
+  Sql += "       INITIAL_EXTENT"           + " || '" + Colsep + "' ||\n"
+  Sql += "       NEXT_EXTENT"              + " || '" + Colsep + "' ||\n"
+  Sql += "       MIN_EXTENTS"              + " || '" + Colsep + "' ||\n"
+  Sql += "       MAX_EXTENTS"              + " || '" + Colsep + "' ||\n"
+  Sql += "       MAX_SIZE"                 + " || '" + Colsep + "' ||\n"
+  Sql += "       PCT_INCREASE"             + " || '" + Colsep + "' ||\n"
+  Sql += "       MIN_EXTLEN"               + " || '" + Colsep + "' ||\n"
+  Sql += "       LOGGING"                  + " || '" + Colsep + "' ||\n"
+  Sql += "       FORCE_LOGGING"            + " || '" + Colsep + "' ||\n"
+  Sql += "       EXTENT_MANAGEMENT"        + " || '" + Colsep + "' ||\n"
+  Sql += "       ALLOCATION_TYPE"          + " || '" + Colsep + "' ||\n"
+  Sql += "       SEGMENT_SPACE_MANAGEMENT" + " || '" + Colsep + "' ||\n"
+  Sql += "       RETENTION"                + " || '" + Colsep + "' ||\n"
+  Sql += "       BIGFILE"                  + " || '" + Colsep + "' ||\n"
+  Sql += "       ENCRYPTED"                + " || '" + Colsep + "' ||\n"
+  Sql += "       COMPRESS_FOR\n"
+  Sql += "  FROM dba_tablespaces\n"
+  Sql += " WHERE tablespace_name = '" + Model + "';"
+
+  if (ConnStr != ''):
+    (rc, Stdout, ErrorList) = RunSqlplus(Sql, True, ConnStr)
+  else:
+    (rc, Stdout, ErrorList) = RunSqlplus(Sql, True)
+
+  if (rc == True) :
+    PrintError(Sql, Stdout, ErrorList)
+    exit(1)
+
+  if (rc != 0):
+    print("\nError Processing GenTbspDDL SQL")
+    print("------------------------------------------------------------------------------")
+    print(Sql)
+    print("------------------------------------------------------------------------------")
+    PrintError(rc, Stdout, ErrorList)
+    return(1, TbspDict)
+
+  if ((Stdout != '') and (Stdout.count(Colsep) == 16)):
+    BlockSize  = Stdout.split(Colsep)[0].strip()
+    InitExt    = Stdout.split(Colsep)[1].strip()
+    NextExt    = Stdout.split(Colsep)[2].strip()
+    MinExt     = Stdout.split(Colsep)[3].strip()
+    MaxExt     = Stdout.split(Colsep)[4].strip()
+    MaxSize    = Stdout.split(Colsep)[5].strip()
+    PctIncr    = Stdout.split(Colsep)[6].strip()
+    MinExtLen  = Stdout.split(Colsep)[7].strip()
+    Logging    = Stdout.split(Colsep)[8].strip()
+    ForceLog   = Stdout.split(Colsep)[9].strip()
+    ExtMgt     = Stdout.split(Colsep)[10].strip()
+    AllocType  = Stdout.split(Colsep)[11].strip()
+    SegSpMgt   = Stdout.split(Colsep)[12].strip()
+    Retention  = Stdout.split(Colsep)[13].strip()
+    Bigfile    = Stdout.split(Colsep)[14].strip()
+    Encrypt    = Stdout.split(Colsep)[15].strip()
+    CompFor    = Stdout.split(Colsep)[16].strip()
+  else:
+    print("\nInvalid results from GenTbspDDL SQL")
+    print("------------------------------------------------------------------------------")
+    print(Stdout.split(Colsep))
+    print("------------------------------------------------------------------------------")
+    return(1, DDL)
+
+  if (Bigfile.upper() == 'YES'):
+    Bigfile = 'BIGFILE'
+  
+  # CREATE BIGFILE TABLESPACE RULE_FACT_202201_TBLS DATAFILE '+DATA' SIZE 20M AUTOEXTEND ON NEXT 100M MAXSIZE 2147483645  LOGGING EXTENT MANAGEMENT LOCAL BLOCKSIZE 8192 SEGMENT SPACE MANAGEMENT AUTO;
+  DDL  = "CREATE %s TABLESPACE %s DATAFILE '%s' SIZE %s" % (Bigfile, Name, '+DATA', TbspInit)
+  DDL += "\n AUTOEXTEND ON NEXT %s MAXSIZE %s EXTENT MANAGEMENT %s BLOCKSIZE %s" % (TbspNext, MaxSize, ExtMgt, BlockSize)
+  DDL += "\n SEGMENT SPACE MANAGEMENT %s %s;" % (SegSpMgt, Logging)
+
+  return(rc, DDL)
+# ---------------------------------------------------------------------------
+# End GenTbspDDL()
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Def : GenAddPartition()
+# Desc: Generate DDL to add partitions
+# Args: PartDict = Dictinary of partition attributes
+# Retn: return code, DDL (string)
+# ---------------------------------------------------------------------------
+def GenAddPartition(Owner, Table, PartDict):
+  NewPartName = ''
+  DDL         = ''
+  Prefix      = ''
+  Postfix     = ''
+  Date        = ''
+  HY          = ''
+  Qtr         = ''
+  Yr          = ''
+  Mo          = ''
+  Da          = ''
+  MatchGroup  = []
+  rc          = 0
+
+  PartPos            = PartDict['PARTITION_POSITION']
+  PartName           = PartDict['PARTITION_NAME']
+  PartTablespace     = PartDict['TABLESPACE_NAME']
+  PartPctFree        = PartDict['PCT_FREE']
+  PartPctUsed        = PartDict['PCT_USED']
+  PartIniTrans       = PartDict['INI_TRANS']
+  PartMaxTrans       = PartDict['MAX_TRANS']
+  PartCompression    = PartDict['COMPRESSION']
+  PartCompressFor    = PartDict['COMPRESS_FOR']
+  PartBufferPool     = PartDict['BUFFER_POOL']
+  PartFlashCache     = PartDict['FLASH_CACHE']
+  PartCellFlashCache = PartDict['CELL_FLASH_CACHE']
+  PartTableName      = PartDict['TABLE_NAME']
+  PartHighValue      = PartDict['HIGH_VALUE']
+  PartLogging        = PartDict['LOGGING']
+
+  # This case should never happen but just in case...
+  # ----------------------------------------------------
+  if (Table.upper() != PartTableName.upper()):
+    rc += 1
+    print('         ERROR: Partition definition is for the wrong table.')
+    print('                  Table          : %s' % Table)
+    print('                  Partition Table: %s' % PartTableName)
+    return(rc, '')
+
+  # Locate the date in the name of the tablespace...
+  NewTablespace = PartTablespace
+  Match = search(r'(\D+)(\d+)(Q[1-4])(\D+)|(\D+)(\d+)(Q[1-4])', PartTablespace)
+  if (Match):
+    MatchGroup = Match.groups()
+    if (MatchGroup[0] is not None):
+      (Prefix, Date, Qtr, Postfix) = MatchGroup[0:4]
+    elif (MatchGroup[4] is not None):
+      (Prefix, Date, Qtr) = MatchGroup[4:7]
+    Qtr = Qtr[1:]
+  else:
+    Match = search(r'(\D+)(\d+)(HY[1-2])(\D+)|(\D+)(\d+)(HY[1-2])', PartTablespace)
+    if (Match):
+      MatchGroup = Match.groups()
+      if (MatchGroup[0] is not None):
+        (Prefix, Date, HY, Postfix) = MatchGroup[0:4]
+      elif (MatchGroup[4] is not None):
+        (Prefix, Date, HY) = MatchGroup[4:7]
+      HY = HY[2:]
+    else:
+      Match = search(r'(\D+)(\d+)(\D+)|(\D+)(\d+)', PartTablespace)
+      if (Match):
+        MatchGroup = Match.groups()
+        if (MatchGroup[0] is not None):
+          (Prefix, Date, Postfix) = MatchGroup[0:3]
+        elif (MatchGroup[3] is not None):
+          (Prefix, Date) = MatchGroup[3:5]
+
+  if (Date != '' and len(Date) >= 4):
+    if (Qtr != ''):
+      if (len(Date) == 4):
+        NewTablespace = ''.join([Prefix, ThisYear + 'Q' + ThisQtr])
+      elif (len(Date) == 6):
+        print('         WARNING: Qtr miss: %30s' % Qtr)
+      elif (len(Date) == 8):
+        print('         WARNING: Qtr miss: %30s' % Qtr)
+      else:
+        print('         WARNING: Qtr miss.')
+    elif (HY != ''):
+      if (len(Date) == 4):
+        NewTablespace = ''.join([Prefix, ThisYear + 'HY' + ThisHY])
+      elif (len(Date) == 6):
+        print('         WARNING: HY miss: %30s' % HY)
+      elif (len(Date) == 8):
+        print('         WARNING: HY miss: %30s' % HY)
+    else:
+      if (len(Date) == 4):
+        NewTablespace = ''.join([Prefix, ThisYear])
+      elif (len(Date) == 6):
+        NewTablespace = ''.join([Prefix, ThisYear + ThisMonth])
+      elif (len(Date) == 8):
+        if (ThisDay == ''):
+          print('     NOTEICE: Tablespace name includes date with day (YYYYMMDD) but no day specified for Period: %s' % Period)
+          print('              The tablespace used by the last partition added will be used: %s' % PartTablespace)
+        else:
+          NewTablespace = ''.join([Prefix, ThisYear + ThisMonth + ThisDay])
+    if (Postfix != '' and NewTablespace != PartTablespace):
+      NewTablespace += Postfix
+
+  ###! print('Date    : %-20s %-50s\n                               %-50s\n' % (Date, PartTablespace, NewTablespace))
+
+  TbspExists = TablespaceExists(NewTablespace.upper())
+  if (TbspExists == True):
+    (rc, TbspFreespace) = GetTbspFreespace(NewTablespace.upper())
+    if (rc == 0):
+      if (int(TbspFreespace) < FspThresh):
+        print('         CAUTION: Consider adding a datafile: %s, freespace: %sMB' % (NewTablespace, TbspFreespace))
+    else:
+      print('         ERROR: Non 0 value return code from GetTbspFreespace(). Tablespace: %s' % NewTablespace)
+      rc+=1
+  else:
+    ###! print('Tablespace Must be Created: %s' % NewTablespace.upper())
+    # Tablespace Must be created.
+    # ----------------------------
+    (rc, ddl) = GenTbspDDL(PartTablespace, NewTablespace)
+    if (rc == 0):
+      DDL += ddl + '\n'
+    else:
+      print('    ERROR: Failed to generate DDL for adding tablesapce: %s' % NewTablespace)
+
+  # Determine New Partition Name
+  # ------------------------------
+  NewPartName = ''
+  PartNameElements = PartName.split('_')
+  Prefix = '_'.join(PartNameElements[0:-1])
+  Postfix = ''.join(PartNameElements[-1:])
+
+  if (Postfix[0:2] == 'SP'):
+    try:
+      nn = int(Postfix[2:]) + 1
+      if (nn <= 9):
+        NewPartName = Prefix + '_SP0' + str(nn)
+      else:
+        NewPartName = Prefix + '_SP' + str(nn)
+    except:
+      print('         ERROR: Cannot increment SPnn in partition name: %s -- Partition will be skipped.' % PartTableName + '.' + PartName)
+      NewPartName = ''
+  else:
+    if (len(Postfix) == 4):
+      nnnn = 0
+      try:
+        nnnn = int(Postfix)
+        if (nnnn >= 1900 and nnnn <= 3000):
+          NewPartName = Prefix + '_' + ThisYear
+        else:
+          rc += 1
+          print('         ERROR: Invalid year in partition name postfix. Partition will be skipped.')
+          print('                Partition  : %s' % PartName)
+          print('                Postfix    : %s' % Postfix)
+      except:
+        rc += 1
+        print('         ERROR: Invalid YYYY format in partition name postfix. Partition will be skipped.')
+        print('                Partition  : %s' % PartName)
+        print('                Postfix    : %s' % Postfix)
+        NewPartName = ''
+    elif (len(Postfix) == 6):
+      nn = 0
+      try:
+        nn = int(Postfix[4:])
+        if (nn >= 1 and nn <= 12):
+          NewPartName = Prefix + '_' + ThisYear + ThisMonth
+        else:
+          rc += 1
+          print('         ERROR: Invalid month in partition name postfix. Partition will be skipped.')
+          print('                Partition  : %s' % PartName)
+          print('                Postfix    : %s' % Postfix)
+      except:
+        rc += 1
+        print('         ERROR: Invalid YYYYMM format in partition name postfix. Partition will be skipped.')
+        print('                Partition  : %s' % PartName)
+        print('                Postfix    : %s' % Postfix)
+        NewPartName = ''
+    elif (len(Postfix) == 8):
+      nn = 0
+      try:
+        nn = int(Postfix[6:])
+        if (nn >= 1 and nn <= 31):
+          NewPartName = Prefix + '_' + ThisYear + ThisMonth + ThisDay
+        else:
+          rc += 1
+          print('         ERROR: Invalid day in partition name postfix. Partition will be skipped.')
+          print('                Partition  : %s' % PartName)
+          print('                Postfix    : %s' % Postfix)
+      except:
+        rc += 1
+        print('         ERROR: Invalid YYMMDD format in partition name postfix. Partition will be skipped.')
+        print('                Partition  : %s' % PartName)
+        print('                Postfix    : %s' % Postfix)
+        NewPartName = ''
+
+  if (NewPartName == ''):
+    DDL = ''
+  else:
+    try:
+      PartPctFree = PartDict['PCT_FREE']
+    except:
+      print('    NOTICE: PCT_FREE missing from source definition. Defaulting to: 0')
+
+    try:
+      PartPctUsed = PartDict['PCT_USED']
+    except:
+      print('    NOTICE: PCT_USED missing from source definition. Defaulting to: ""')
+
+    try:
+      PartIniTrans = PartDict['INI_TRANS']
+    except:
+      print('    NOTICE: INI_TRANS missing from source definition. Defaulting to: 1')
+
+    try:
+      PartMaxTrans = PartDict['MAX_TRANS']
+    except:
+      print('    NOTICE: MAX_TRANS missing from source definition. Defaulting to: 255')
+
+    try:
+      PartCompression = PartDict['COMPRESSION']
+    except:
+      pass
+
+    try:
+      PartCompressFor = PartDict['COMPRESS_FOR']
+    except:
+      print('    NOTICE: COMPRESS_FOR missing from source definition. Defaulting to: ""')
+
+    try:
+      PartBufferPool = PartDict['BUFFER_POOL']
+    except:
+      print('    NOTICE: BUFFER_POOL missing from source definition. Defaulting to: DEFAULT')
+
+    try:
+      PartCellFlashCache = PartDict['CELL_FLASH_CACHE']
+    except:
+      print('    NOTICE: CELL_FLASH_CACHE missing from source definition. Defaulting to: DEFAULT')
+
+    try:
+      PartFlashCache = PartDict['FLASH_CACHE']
+    except:
+      print('    NOTICE: FLASH_CACHE missing from source definition. Defaulting to: DEFAULT')
+
+    if (PartLogging.upper() == 'YES'):
+      PartLogging = 'LOGGING'
+    else:
+      PartLogging = 'NOLOGGING'
+
+    # If new partition already exists then clear the DDL and return rc + 1
+    # ----------------------------------------------------------------------
+    Found = ObjectExists(Owner, 'TABLE PARTITION', NewPartName)
+    if (Found == True):
+      print('         ERROR: Partition already exists and will be skipped.')
+      print('                Partition  : %s' % NewPartName)
+      rc += 1
+      DDL = ''
+    else:
+      # Check to see if the new partitin will have a new 
+      NewHighValue = "TO_DATE('" + ValuesLessThan + "', 'SYYYY-MM-DD HH24:MI:SS', 'NLS_CALENDAR=GREGORIAN')"
+
+      # Rermove whitespace for comparison...
+      CmpNewHighValue = ''.join(NewHighValue.split())
+      CmpPartHighValue = ''.join(PartHighValue.split())
+
+      
+      if (CmpNewHighValue <= CmpPartHighValue):
+        print('         ERROR: New partition bound does not collate higher than that of the last partition. (see ORA-14074')
+        print('                Partition High Value : %s' % CmpPartHighValue)
+        print('                New High Value       : %s' % CmpNewHighValue)
+        rc += 1
+        DDL = ''
+      else:
+        ddl = "ALTER TABLE " + Owner + "." + Table + " ADD PARTITION " + NewPartName
+        ddl += "\n VALUES LESS THAN (" + NewHighValue + ")"
+        if (PartCompressFor != ''):
+          ddl += "\n " + PartLogging + " COMPRESS FOR " + PartCompressFor + " TABLESPACE " + NewTablespace + ";"
+        else:
+          ddl += "\n " + PartLogging + " TABLESPACE " + NewTablespace + ";"
+        if (DDL == ''):
+          DDL = ddl
+        else:
+          DDL += '\n' + ddl
+
+  return(rc, DDL)
+# ---------------------------------------------------------------------------
+# End GenAddPartition()
+# ---------------------------------------------------------------------------
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  Cmd              = basename(argv[0])
+  CmdDesc          = 'Partition Maintenance (' + Cmd + ')'
+  Version          = '1.0'
+  VersionDate      = 'Tue Aug 10 15:24:44 CDT 2017'
+  DevState         = 'Test'
+  Banner           = CmdDesc + ': Release ' + Version + ' '  + DevState + '. Last updated: ' + VersionDate
+  Now              = datetime.now()
+  EtcDir           = '/home/oracle/dba/etc'
+  TmpDir           = '/home/oracle/dba/tmp'
+  LogDir           = '/home/oracle/dba/log'
+  Script           = pathjoin(TmpDir, Cmd + '.sql')
+  ThisYear         = str(datetime.now().strftime("%Y"))
+  ThisMonth        = str(datetime.now().strftime("%m"))
+  ThisDay          = str(datetime.now().strftime("%d"))
+  SqlHeader        = '/***** ' + CmdDesc.upper() + ' *****/'
+  Colsep           = "~"
+  MainRc           = 0
+  TabList          = []
+  ConnStr          = ''
+  AddPartList      = []
+  AllTables        = False
+  LongMonths       = [1,3,5,7,8,10,12]
+  IsLeapYear       = False
+  Q1               = [1,2,3]
+  Q2               = [4,5,6]
+  Q3               = [7,8,9]
+  Q4               = [10,11,12]
+  H1               = [1,2,3,4,5,6]
+  H2               = [7,8,9,10,11,12]
+  ThisQtr          = ''
+  ThisHY           = ''
+  ThisYear         = ''
+  ThisMonth        = ''
+  ThisDay          = ''
+  NextQtr          = ''
+  NextHalf         = ''
+  NextDay          = ''
+  NextMonth        = ''
+  NextYear         = ''
+  FspThresh        = 1  # MB
+  TbspInit         = '100M'
+  TbspNext         = '100M'
+  
+  Usage  = '\n\nGenerate DDL for adding new partitions to the CDCI_OWNER schema.\n'
+  Usage += '\n' + Cmd + ' [-o] [-p] [-t] [-e] [-v] [-h]'
+  Usage += '\n\nExample:'
+  Usage += '\n         ' + Cmd + ' -o cdci_owner -p 20210329 -t NONMON_POST_STV_FACT,RULE_DETAILS_FACT_TOKEN'
+  Usage += '\n         ' + Cmd + ' -o cdci_owner'
+  Usage += '\n         ' + Cmd + ' -o cdci_owner -e'
+  Usage += '\n         ' + Cmd + ' -o cdci_owner -p 20210329'
+  Usage += '\n         ' + Cmd + ' -o cdci_owner -t NONMON_POST_STV_FACT,RULE_DETAILS_FACT_TOKEN'
+  Usage += '\n         ' + Cmd + ' -h'
+  Usage += '\n         ' + Cmd + ' --v'
+  Usage += '\n         ' + Cmd + '\n\n*** Note: Be careful with the -e option. This may execute DDL immediately in the database.'
+  ArgParser = OptionParser(Usage)
+
+  # Process command line options
+  # ----------------------------------
+  ArgParser = OptionParser(Usage)
+  ArgParser.add_option("-e",  action="store_true", dest="Execute",      default=False,                          help="Execute DDL Generated")
+  ArgParser.add_option("-o",                       dest="Owner",        default='',                   type=str, help="Table Owner (schema)")
+  ArgParser.add_option("-p",                       dest="Period",       default=ThisYear + ThisMonth, type=str, help="Period (YYYYMMDD or YYYYMM)")
+  ArgParser.add_option("-t",                       dest="Tables",       default='',                   type=str, help="Comma selimited list of tables to create")
+  ArgParser.add_option("-s",  action="store_true", dest="Silent",       default=False,                          help="Silent mode. No prompts.")
+  ArgParser.add_option("-v", action="store_true",  dest="Version",      default=False,                          help="Version Information")
+
+  Options, args = ArgParser.parse_args()
+  argc = len(args)
+
+  # Initalize Command Line Options
+  # ------------------------------------
+  Execute       = Options.Execute
+  Owner         = Options.Owner
+  Period        = Options.Period
+  ShowVer       = Options.Version
+  Silent        = Options.Silent
+  Tables        = Options.Tables
+
+  if (ShowVer):
+    print('\n%s' % Banner)
+    exit()
+  # Start logging - Everything from stdout will be logged from this point.
+  # -----------------------------------------------------------------------
+  LogTime = datetime.now().strftime("%Y%m%d.%H%M%S")
+  LogFile = pathjoin(LogDir, Cmd + '.' + LogTime + '.log')
+  try:
+    Log = open(LogFile, 'wb')
+    Log.close()
+  except:
+    print('\nUnable to to open log file for write: %s' % LogFile)
+    exit(1)
+  sys.stdout = Logger(LogFile)
+
+  # Parse Connect string (if any)
+  # -------------------------------
+  if (len(args) > 0):
+    InStr = args[0]
+    ConnStr = ParseConnectString(InStr)
+
+  # Setup ORACLE_SID
+  # -----------------
+  if (Execute == True and ConnStr == ''):
+    if ('ORACLE_SID' in environ):
+      OracleSid = environ['ORACLE_SID']
+    else:
+      if(version_info[0] >= 3):
+        OracleSid = input('\nEnter ORACLE_SID: ')
+      else:
+        OracleSid = raw_input('\nEnter ORACLE_SID: ')
+        if(OracleSid != ''):
+          environ['ORACLE_SID'] = OracleSid
+        else:
+          print('\nORACLE_SID is required')
+          print('\n  example:    export ORACLE_SID=MYDB')
+          exit(1)
+
+  # Validate Period
+  # ----------------
+  if (not Period.isdigit()):
+    print('\nPeriod must be a number in the form of YYYYMM or YYYYMMDD).')
+    print('\n%s' % Usage)
+    exit(1)
+
+  if (len(Period) != 6 and len(Period) != 8) :
+    print('\nPeriod must be a valid date in the form of YYYYMM or YYYYMMDD).')
+    print('\n%s' % Usage)
+    exit(1)
+
+  if ((int(str(Period)[4:6]) < 1) or (int(str(Period)[4:6]) > 12)) :
+    print('\n\nInvalid month value. Date must be in the form of YYYYMM or YYYYMMDD and MM between 01 and 12.')
+    print('\n%s' % Usage)
+    exit(1)
+
+  if (len(Period) == 8):
+    if ((int(str(Period)[6:8]) < 1) or (int(str(Period)[6:8]) > 31)) :
+      print('\n\nInvalid day value. Date must be in the form of YYYYMM or YYYYMMDD and DD between 01 and 31.')
+      print('\n%s' % Usage)
+      exit(1)
+
+  if (int(str(Period)[0:4]) < 2017) :
+    print('\nPeriod must be a valid date in the form of YYYYMM) and YYYY >= 2017.')
+    print('\n%s' % Usage)
+    exit(1)
+
+  ThisYear  = str(Period)[0:4]
+  ThisMonth = str(Period)[4:6]
+
+  # Determine this quarter
+  # -----------------------
+  if (int(ThisMonth) in Q1):
+    ThisQtr = '1'
+  elif (int(ThisMonth) in Q2):
+    ThisQtr = '2'
+  elif (int(ThisMonth) in Q3):
+    ThisQtr = '3'
+  elif (int(ThisMonth) in Q4):
+    ThisQtr = '4'
+
+  # Determine this year half
+  # -------------------------
+  if (int(ThisMonth) in H1):
+    ThisHY = '1'
+  else:
+    ThisHY = '2'
+
+  if ((len(Period) == 8)):
+    ThisDay = str(Period)[6:8]
+    d = (date(int(ThisYear), int(ThisMonth), int(ThisDay)) + timedelta(days=1)).strftime('%Y-%m-%d')
+    ValuesLessThan = str(d) + ' 00:00:00'
+    NextYear  = d[0:4]
+    NextMonth = d[5:7]
+    NextDay   = d[8:10]
+    NextPeriod = NextYear + NextMonth + NextDay
+  else:
+    ThisDay = ''
+    if (ThisMonth == '12'):
+      NextMonth = '01'
+      NextYear = str(int(ThisYear) + 1)
+    else:
+      NextMonth = int(ThisMonth) + 1
+      if (NextMonth < 10):
+        NextMonth = '0' + str(NextMonth)
+      else:
+        NextMonth = str(NextMonth)
+      NextYear = ThisYear
+    NextPeriod = NextYear + NextMonth
+    ValuesLessThan = NextYear + '-' + NextMonth + '-'  + '01' + ' 00:00:00'
+
+  # Determine next quarter
+  # ------------------------
+  if (int(NextMonth) in Q1):
+    NextQtr = '1'
+  elif (int(NextMonth) in Q2):
+    NextQtr = '2'
+  elif (int(NextMonth) in Q3):
+    NextQtr = '3'
+  elif (int(NextMonth) in Q4):
+    NextQtr = '4'
+
+  # Determine next year half
+  # --------------------------
+  if (int(NextMonth) in H1):
+    NextHalf = '1'
+  else:
+    NextHalf = '2'
+
+  # Setup ORACLE_HOME
+  # -------------------
+  if ('ORACLE_HOME' in environ):
+    OracleHome = environ['ORACLE_HOME']
+  else:
+    if(version_info[0] >= 3):
+      OracleHome = input('\nEnter ORACLE_HOME: ')
+    else:
+      OracleHome = raw_input('\nEnter ORACLE_HOME: ')
+    if(OracleHome == ''):
+      print('\nORACLE_HOME is required.')
+      print('\n  example:    export ORACLE_HOME=/u01/app/oracle/product/11.2.0.3/dbhome_1')
+      exit(1)
+  OracleBin  = pathjoin(OracleHome, 'bin')
+
+  # Validate Owner
+  # -------------------
+  if (Owner == ''):
+    if(version_info[0] >= 3):
+      Owner = input('\nEnter Table Owner: ')
+    else:
+      Owner = raw_input('\nEnter Table Owner: ')
+    if(Owner == ''):
+      print('\nOwner is required.')
+      print('\n  example:    %s -o cdci_owner' % (Cmd))
+      exit(1)
+  Owner = Owner.upper()
+
+  # Validate Table
+  # ---------------------
+  if( Tables == ''):
+    AllTables = True
+  else:
+    TabList = ''.join(Tables.upper().split()).split(',')
+    TabList = list(set(TabList))
+    try:
+      TabList.remove('')
+    except:
+      pass
+
+  # Make sure the table(s) exist
+  # -------------------------------
+  if (AllTables == True):
+    (rc,TabList) = GetTables(Owner)
+    MainRc += rc
+  else:
+    for Table in sorted(TabList):
+      Found = ObjectExists(Owner, 'Table', Table)
+      if (Found != True) :
+        print('\nWARNING: Table not found: %s' % (Owner + '.' + Table))
+        print('         Removing table from list.')
+        TabList.remove(Table)
+
+  # Open the script file for write...
+  # ---------------------------------
+  try:
+    s = open(Script, 'w')
+  except:
+    print('\nCannot open script file for write: %s' % Script)
+    exit(1)
+
+  print('\n============================================================================================================================')
+  print('%s: Release %s Production, %28s %38s' % (CmdDesc, Version, VersionDate, Now.strftime("%Y-%m-%d %H:%M")))
+  print('============================================================================================================================')
+  print('')
+  print('This program generates DDL for adding new partitions to tables.')
+  print('')
+  print('Global Settings')
+  print('----------------')
+  print(' Create Script                  : %s' % Script)
+  print(' Log File                       : %s' % LogFile)
+  try:
+    print(' Oracle SID                     : %s' % environ['ORACLE_SID'])
+  except:
+    pass
+  try:
+    print(' Oracle Home                    : %s' % environ['ORACLE_HOME'])
+  except:
+    pass
+  if(ConnStr != ''):
+    print(' ConnectString                  : %s' % ConnStr)
+  print(' Period                         : %s' % Period)
+
+  for Table in TabList:
+    print('\nTable: %s' % Table)
+    # Load up the Coresponding Source Partition Definition from DBA_TAB_PARTITIONS
+    # ------------------------------------------------------------------------------------
+    if (MainRc == 0):
+      (rc,PartDict) = GetPartDef(Owner, Table)
+      MainRc += rc
+      if (MainRc == 0):
+        (rc, DDL) = GenAddPartition(Owner, Table, PartDict)
+        if (rc == 0):
+          AddPartList.append(DDL)
+
+  # Write the DDL to the script file...
+  # -------------------------------------
+  s.write('-----------------------------------------------------------------------------------------------------\n')
+  s.write('--- %s: Release %s, %28s %22s\n' % (CmdDesc, Version, VersionDate, Now.strftime("%Y-%m-%d %H:%M")))
+  s.write('-----------------------------------------------------------------------------------------------------\n')
+  s.write('--- Tables: %s' % '\n---         '.join(sorted(TabList)) + '\n')
+  s.write('-----------------------------------------------------------------------------------------------------\n')
+  s.write('%s' % '\n\n'.join(AddPartList) + '\n')
+  s.write('-----------------------------------------------------------------------------------------------------\n')
+  s.close()
+
+  if (MainRc == 0):
+    # Add New Partitions / print DDL
+    # ----------------------------------
+    if (Execute == False):
+      print('\n---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---')
+      print('\n---\n'.join(AddPartList))
+      print('---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---')
+    else:
+      for AddPartitionDDL in AddPartList:
+        # Create The Table
+        # -----------------
+        if (ConnStr != ''):
+          (rc, Stdout, ErrorList) = RunSqlplus(AddPartitionDDL, True, ConnStr)
+        else:
+          (rc, Stdout, ErrorList) = RunSqlplus(AddPartitionDDL, True)
+
+        if(rc != 0):
+          MainRc += 1
+          print("\nError occured executing the following SQL:")
+          PrintError(AddPartitionDDL, Stdout, ErrorList)
+
+  Now = datetime.now()
+  print('\n============================================================================================================================')
+  print('Process complete%108s' % Now.strftime("%Y-%m-%d %H:%M"))
+  print('============================================================================================================================')
+  exit(MainRc)
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------
+

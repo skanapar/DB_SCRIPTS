@@ -1,0 +1,723 @@
+#!/bin/env python
+
+###################################################################################################
+# Name:         partcheck                                                                         #
+# Author:       Randy Johnson                                                                     #
+# Description:  Validate table, partition, subpartition configuration attributes that could cause #
+#               dataload processes to fail                                                        #
+# Dependencies: Oracle Client including sqlplus.                                                  #
+#                                                                                                 #
+# History:                                                                                        #
+#                                                                                                 #
+# Date       Ver. Who              Change Description                                             #
+# ---------- ---- ---------------- -------------------------------------------------------------- #
+# 08/01/2016 1.00 Randy Johnson    Initial release.                                               #
+###################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+import traceback
+import sys
+from datetime     import datetime
+from optparse     import OptionParser
+from os           import environ
+from os.path      import basename
+from os.path      import join as pathjoin
+from sys          import argv
+from sys          import exit
+from sys          import version_info
+from sys          import stdout
+from signal       import SIGPIPE
+from signal       import SIG_DFL
+from signal       import signal
+from socket       import gethostname
+from Oracle       import Logger
+from Oracle       import RunSqlplus
+from Oracle       import SetOracleEnv
+from Oracle       import PrintError
+from Oracle       import ParseConnectString
+
+
+# ---------------------------------------------------------------------------
+# Def : Val1()
+# Desc: Validation 1. Check if monthly table exists for this month and last
+#       month.
+# Args: Owner, TableName, ThisPeriod
+# Retn: True=Pass / False=Fail
+# ---------------------------------------------------------------------------
+def Val1(Owner, TableName, ThisPeriod):
+  ThisTable  = TableName + '_' + ThisPeriod
+  LastTable  = ''
+  LastPeriod = ''
+  ThisFound  = False
+  LastFound  = False
+
+  if (Period[4:6] == '01'):
+    LastPeriod = str(int(Period[0:4])-1) + '12'
+  else:
+    LastPeriod = str(int(Period)-1)
+
+  LastTable  = TableName + '_' + LastPeriod
+
+  ThisFound = ObjectExists(Owner, 'TABLE', ThisTable)
+  print('This Found: %s' % ThisFound)
+
+  LastFound = ObjectExists(Owner, 'TABLE', LastTable)
+  print('Last Found: %s' % LastFound)
+
+  if (ThisFound == False or LastFound == False) :
+    return(False)
+  else:
+    return(True)
+
+# ---------------------------------------------------------------------------
+# End Val1()
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Def : Val2()
+# Desc: Validation 2. Check for missing/malformed partitions.
+# Args: Owner, TableName, ThisPeriod
+# Retn: True=Pass / False=Fail
+# ---------------------------------------------------------------------------
+def Val2(Owner, TableName, ThisPeriod, LastPeriod):
+  ThisPartDict = {}
+  LastPartDict = {}
+  Report       = ''
+  ErrorCount   = 0
+
+  # Get partition info for current period.
+  # ---------------------------------------
+  PartInfo = ''
+  HighVals = ''
+  PartInfo = GetPartitions(Owner, Table + '_' + ThisPeriod)
+  Partitions = PartInfo.strip().split('\n')
+
+  for PartRec in Partitions:
+    PartKey = '~'.join([n.strip().strip("'") for n in PartRec.split(Colsep)[0:3]])
+    PartPos = ''.join(PartRec.split(Colsep)[3:4]).strip()
+    ListLen = ''.join(PartRec.split(Colsep)[4:5]).strip()
+    ListVal = PartRec.split(Colsep)[5:6]
+
+    ThisPartDict[PartKey] = {
+      'Position'   : PartPos,
+      'ListLength' : ListLen,
+      'ListValues' : ListVal
+    }
+
+  # Get partition info for previous (last) period.
+  # -----------------------------------------------
+  PartInfo = ''
+  HighVals = ''
+  PartInfo = GetPartitions(Owner, Table + '_' + LastPeriod)
+  Partitions = PartInfo.strip().split('\n')
+
+  for PartRec in Partitions:
+    PartKey = '~'.join([n.strip().strip("'") for n in PartRec.split(Colsep)[0:3]])
+    PartPos = ''.join(PartRec.split(Colsep)[3:4]).strip()
+    ListLen = ''.join(PartRec.split(Colsep)[4:5]).strip()
+    ListVal = PartRec.split(Colsep)[5:6]
+
+    LastPartDict[PartKey] = {
+      'Position'   : PartPos,
+      'ListLength' : ListLen,
+      'ListValues' : ListVal
+    }
+
+  # Compare partitions this period over last period.
+  for ThisPartKey in ThisPartDict:
+    (ThisOwner, ThisTable, ThisPartition) = ThisPartKey.split(Colsep)
+    (LastOwner, junk,      LastPartition) = ThisPartKey.split(Colsep)
+
+    # The table for last period is the same as this period except for the date postfix (_YYYYMM).
+    # So we formulate the table name by stripping the postfix (ThisPeriod) from ThisTable
+    # and applying LastPeriod postfix.
+    LastTable = '_'.join(ThisTable.split('_')[0:-1]) + '_' + LastPeriod
+    LastPartKey = '~'.join((LastOwner, LastTable, LastPartition))
+
+    ThisPosition = ThisPartDict[ThisPartKey]['Position']
+    ThisLength   = ThisPartDict[ThisPartKey]['ListLength']
+    ThisValues   = ThisPartDict[ThisPartKey]['ListValues']
+
+    LastPosition = LastPartDict[LastPartKey]['Position']
+    LastLength   = LastPartDict[LastPartKey]['ListLength']
+    LastValues   = LastPartDict[LastPartKey]['ListValues']
+
+    if (LastPartKey not in LastPartDict) :
+      ErrorCount += 1
+      Report += '\n  Partition not found: %s' % LastPartition
+      return(False, Report)
+
+    if (ThisPosition != LastPosition):
+      ErrorCount += 1
+      Report += '\n\n  Partition position mismatch.'
+      Report += '\n    %s Position : %-30s' % (ThisPeriod, ThisPosition)
+      Report += '\n    %s Position : %-30s' % (LastPeriod, LastPosition)
+
+    if (ThisPosition != LastPosition):
+      ErrorCount += 1
+      Report += '\n\n  Partition High Value length mismatch.'
+      Report += '\n    %s HV Length : %-30s' % (ThisPeriod, ThisLength)
+      Report += '\n    %s HV Length : %-30s' % (LastPeriod, LastLength)
+
+    ListMatch = cmp(sorted(ThisValues), sorted(LastValues))
+    if (ListMatch != 0):
+      ErrorCount += 1
+      Report += '\n\n  Partition High Value list mismatch.'
+      Report += '\n    %s High Value : %-100s' % (ThisPeriod, sorted(ThisValues))
+      Report += '\n    %s High Value : %-100s' % (LastPeriod, sorted(LastValues))
+
+  if (ErrorCount == 0):
+    return(True, '')
+  else:
+    Report = '\n  Owner: %s, Table: %s, Partition: %s' % (LastOwner, LastTable, LastPartition) + Report
+    return(False, Report)
+# ---------------------------------------------------------------------------
+# End Val2()
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Def : Val4()
+# Desc: Validation 4. Check for missing or malformed subpartitions. Compares
+#       current month tables/partitions/subpartitions to last month.
+# Args: Owner, TableName, ThisPeriod
+# Retn: True=Pass / False=Fail
+# ---------------------------------------------------------------------------
+def Val4(Owner, TableName, ThisPeriod, LastPeriod):
+  ThisSubpartDict = {}
+  LastSubpartDict = {}
+  Report       = ''
+  ErrorCount   = 0
+
+  # Get partition info for current period.
+  # ---------------------------------------
+  PartInfo = ''
+  HighVals = ''
+  SubpartInfo = GetSubpartitions(Owner, Table + '_' + ThisPeriod)
+
+  if (SubpartInfo == ''):
+    Report += '\n  No subpartition definition found:'
+    Report += '\n    Owner: %s' % Owner
+    Report += '\n    Table: %s' % TableName + '_' + ThisPeriod
+    return(False, Report)
+    
+  ###! SubpartInfo = GetSubpartitions(Owner, Table)
+  Subpartitions = SubpartInfo.strip().split('\n')
+  
+  for SubpartRec in Subpartitions:
+    SubpartKey = '~'.join([n.strip().strip("'") for n in SubpartRec.split(Colsep)[0:4]])
+    SubpartPos = ''.join(SubpartRec.split(Colsep)[4:5]).strip()
+    ListLen = ''.join(SubpartRec.split(Colsep)[5:6]).strip()
+    ListVal = SubpartRec.split(Colsep)[6:7]
+  
+    ThisSubpartDict[SubpartKey] = {
+      'Position'   : SubpartPos,
+      'ListLength' : ListLen,
+      'ListValues' : ListVal
+    }
+
+  # Get partition info for previous (last) period.
+  # -----------------------------------------------
+  PartInfo = ''
+  HighVals = ''
+  SubpartInfo = GetSubpartitions(Owner, Table + '_' + LastPeriod)
+
+  if (SubpartInfo == ''):
+    Report += '\n  No subpartition definition found for table:'
+    Report += '\n    Owner: %s' % Owner
+    Report += '\n    Table: %s' % TableName + '_' + LastPeriod
+    return(False, Report)
+    
+  ###! SubpartInfo = GetSubpartitions(Owner, Table)
+  Subpartitions = SubpartInfo.strip().split('\n')
+  
+  for SubpartRec in Subpartitions:
+    SubpartKey = '~'.join([n.strip().strip("'") for n in SubpartRec.split(Colsep)[0:4]])
+    SubpartPos = ''.join(SubpartRec.split(Colsep)[4:5]).strip()
+    ListLen = ''.join(SubpartRec.split(Colsep)[5:6]).strip()
+    ListVal = SubpartRec.split(Colsep)[6:7]
+
+    LastSubpartDict[SubpartKey] = {
+      'Position'   : SubpartPos,
+      'ListLength' : ListLen,
+      'ListValues' : ListVal
+    }
+  
+  # Compare partitions this period over last period.
+  for ThisSubpartKey in ThisSubpartDict:
+    (ThisOwner, ThisTable, ThisPartition, ThisSubpartition) = ThisSubpartKey.split(Colsep)
+    (LastOwner, junk,      LastPartition, LastSubpartition) = ThisSubpartKey.split(Colsep)
+
+    # The table for last period is the same as this period except for the date postfix (_YYYYMM).
+    # So we formulate the table name by stripping the postfix (ThisPeriod) from ThisTable
+    # and applying LastPeriod postfix.
+    LastTable = '_'.join(ThisTable.split('_')[0:-1]) + '_' + LastPeriod    
+    ###! LastTable = ThisTable
+    LastSubpartKey = '~'.join((LastOwner, LastTable, LastPartition, LastSubpartition))
+
+    ThisPosition = ThisSubpartDict[ThisSubpartKey]['Position']
+    ThisLength   = ThisSubpartDict[ThisSubpartKey]['ListLength']
+    ThisValues   = ThisSubpartDict[ThisSubpartKey]['ListValues']
+
+    LastPosition = LastSubpartDict[LastSubpartKey]['Position']
+    LastLength   = LastSubpartDict[LastSubpartKey]['ListLength']
+    LastValues   = LastSubpartDict[LastSubpartKey]['ListValues']
+
+    if (LastSubpartKey not in LastSubpartDict) :
+      ErrorCount += 1
+      Report += '\n  Partition not found: %s' % LastSubpartition
+      return(False, Report)
+
+    if (ThisPosition != LastPosition):
+      ErrorCount += 1
+      Report += '\n\n  Partition position mismatch.'
+      Report += '\n    %s Position : %-30s' % (ThisPeriod, ThisPosition)
+      Report += '\n    %s Position : %-30s' % (LastPeriod, LastPosition)
+
+    if (ThisPosition != LastPosition):
+      ErrorCount += 1
+      Report += '\n\n  Partition High Value length mismatch.'
+      Report += '\n    %s HV Length : %-30s' % (ThisPeriod, ThisLength)
+      Report += '\n    %s HV Length : %-30s' % (LastPeriod, LastLength)
+
+    ListMatch = cmp(sorted(ThisValues), sorted(LastValues))
+    if (ListMatch != 0):
+      ErrorCount += 1
+      Report += '\n\n  Partition High Value list mismatch.'
+      Report += '\n    %s High Value : %-100s' % (ThisPeriod, sorted(ThisValues))
+      Report += '\n    %s High Value : %-100s' % (LastPeriod, sorted(LastValues))
+
+  if (ErrorCount == 0):
+    return(True, '')
+  else:
+    Report = '\n  Owner: %s, Table: %s, Partition: %s' % (LastOwner, LastTable, LastPartition, LastSubpartition) + Report
+    return(False, Report)
+# ---------------------------------------------------------------------------
+# End Val4()
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Def : GetPartitions()
+# Desc: Retrieves a list of a table's partitions.
+# Args: Owner, Name
+# Retn: List of partitions.
+# ---------------------------------------------------------------------------
+def GetPartitions(Owner, Name):
+
+  Sql  = "set heading  off\n"
+  Sql += "set colsep   " + Colsep + "\n"
+  Sql += "set pagesize 0\n"
+  Sql += "set feedback off\n"
+  Sql += "set echo     off\n"
+  Sql += "set long     10000\n"
+  Sql += "\n"
+  Sql += "SELECT " + SqlHeader + "\n"
+  Sql += "       table_owner\n"
+  Sql += "      ,table_name\n"
+  Sql += "      ,partition_name\n"
+  Sql += "      ,partition_position\n"
+  Sql += "      ,high_value_length\n"
+  Sql += "      ,high_value\n"
+  Sql += "  FROM dba_tab_partitions\n"
+  Sql += " WHERE table_owner = '" + Owner + "'\n"
+  Sql += "   AND table_name = '" + Name + "'\n"
+  Sql += " ORDER BY table_owner, table_name, partition_name;\n"
+
+  (rc,Stdout,ErrorList) = RunSqlplus(Sql, True)
+
+  if (rc == True) :
+    PrintError(Sql, Stdout, ErrorList)
+    exit(1)
+
+  return(Stdout)
+# ---------------------------------------------------------------------------
+# End GetPartitions()
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Def : GetSubpartitions()
+# Desc: Retrieves a list of a table's subpartitions.
+# Args: Owner, Name
+# Retn: List of partitions.
+# ---------------------------------------------------------------------------
+def GetSubpartitions(Owner, Name):
+
+  Sql  = "set heading  off\n"
+  Sql += "set colsep   " + Colsep + "\n"
+  Sql += "set pagesize 0\n"
+  Sql += "set feedback off\n"
+  Sql += "set echo     off\n"
+  Sql += "set long     10000\n"
+  Sql += "\n"
+  Sql += "SELECT " + SqlHeader + "\n"
+  Sql += "       table_owner                              || '" + Colsep + "' ||\n"
+  Sql += "       table_name                               || '" + Colsep + "' ||\n"
+  Sql += "       partition_name                           || '" + Colsep + "' ||\n"
+  Sql += "       subpartition_name                        || '" + Colsep + "' ||\n"
+  Sql += "       subpartition_position                    || '" + Colsep + "' ||\n"
+  Sql += "       SUBSTR(subpartition_position, 1, 32000)  || '" + Colsep + "' ||\n"
+  Sql += "       high_value_length\n"
+  Sql += "  FROM dba_tab_subpartitions\n"
+  Sql += " WHERE table_owner = '" + Owner + "'\n"
+  Sql += "   AND table_name = '" + Name + "'\n"
+  Sql += " ORDER BY table_owner, table_name, partition_name, subpartition_name;\n"
+
+  (rc,Stdout,ErrorList) = RunSqlplus(Sql, True)
+
+  if (rc == True) :
+    PrintError(Sql, Stdout, ErrorList)
+    exit(1)
+
+  return(Stdout)
+# ---------------------------------------------------------------------------
+# End GetSubpartitions()
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Def : GetHighVals()
+# Desc: Retrieves a list of high values for a partition.
+# Args: Owner, Type, Name
+# Retn: List of high_values.
+# ---------------------------------------------------------------------------
+def GetHighVals(Owner, TableName, PartitionName):
+
+  Sql  = "set heading  off\n"
+  Sql += "set pagesize 0\n"
+  Sql += "set feedback off\n"
+  Sql += "set echo     off\n"
+  Sql += "\n"
+  Sql += "SELECT " + SqlHeader + "\n"
+  Sql += "       high_value\n"
+  Sql += "  FROM dba_tab_partitions\n"
+  Sql += " WHERE table_owner = '" + Owner + "'\n"
+  Sql += "   AND table_name = '" + TableName + "'\n"
+  Sql += "   AND partition_name = '" + PartitionName + "';"
+
+  (rc,Stdout,ErrorList) = RunSqlplus(Sql, True)
+
+  if (rc == True) :
+    PrintError(Sql, Stdout, ErrorList)
+    exit(1)
+
+  return(Stdout)
+# ---------------------------------------------------------------------------
+# End GetHighVals()
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Def : ObjectExists()
+# Desc: Checks for existance of object by owner, by type, by name.
+# Args: Owner, Type, Name
+# Retn: True/False
+# ---------------------------------------------------------------------------
+def ObjectExists(Owner, Type, Name):
+
+  Sql  = "set heading  off\n"
+  Sql += "set pagesize 0\n"
+  Sql += "set feedback off\n"
+  Sql += "set echo     off\n"
+  Sql += "\n"
+  Sql += "SELECT " + SqlHeader + "\n"
+  Sql += "       count(*)\n"
+  Sql += "  FROM dba_objects\n"
+  Sql += " WHERE owner = '" + Owner.upper() + "'\n"
+  Sql += "   AND object_type = '" + Type.upper() + "'\n"
+  Sql += "   AND object_name = '" + Name.upper() + "';"
+
+  (rc,Stdout,ErrorList) = RunSqlplus(Sql, True)
+
+  if (rc == True) :
+    PrintError(Sql, Stdout, ErrorList)
+    exit(1)
+
+  if (Stdout.strip() == '1') :
+    return(True)
+  else:
+    return(False)
+# ---------------------------------------------------------------------------
+# End ObjectExists()
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Def : PartnVals()
+# Desc: Extracts DDL values for partitions so they can be validated.
+# Args: Owner, TableName, PartitionName
+# Retn: PartDict{} = Dictionary of partition values.
+# ---------------------------------------------------------------------------
+def PartnVals(Owner, TableName, PartitionName):
+  Sql  = "set heading  off\n"
+  Sql += "set pagesize 0\n"
+  Sql += "set feedback off\n"
+  Sql += "set echo     off\n"
+  Sql += "\n"
+  Sql += "SELECT " + SqlHeader + "\n"
+  Sql += "       high_value\n"
+  Sql += "  FROM dba_tab_partitions\n"
+  Sql += " WHERE owner           = '" + Owner.upper() + "'\n"
+  Sql += "   AND table_name      = '" + Name.upper() + "'\n"
+  Sql += "   AND partition__name = '" + Name.upper() + "';"
+
+  (rc,Stdout,ErrorList) = RunSqlplus(Sql, True)
+
+  if (rc == True) :
+    PrintError(Sql, Stdout, ErrorList)
+    exit(1)
+
+  print(Stdout.strip())
+  exit()
+
+  if (Stdout.strip() == '1') :
+    return(True)
+  else:
+    return(False)
+# ---------------------------------------------------------------------------
+# End PartnVals()
+# ---------------------------------------------------------------------------
+
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  Cmd          = basename(argv[0])
+  CmdDesc      = 'Data Load Validation (' + Cmd + ')'
+  Version      = '1.00'
+  VersionDate  = 'Mon Jan 25 15:18:13 PST 2016'
+  DevState     = 'Development'
+  Banner       = CmdDesc + ': Release ' + Version + ' '  + DevState + '. Last updated: ' + VersionDate
+  Now          = datetime.now()
+  OraHome      = ''
+  DbName       = ''
+  DbUniqueName = ''
+  Dbca         = ''
+  OracleHome   = ''
+  EtcDir       = '/home/oracle/dba/etc'
+  TmpDir       = '/home/oracle/dba/tmp'
+  LogDir       = '/home/oracle/dba/log'
+  OraVer       = ''
+  Usage        = ''
+  ThisYear     = str(datetime.now().strftime("%Y"))
+  ThisMonth    = str(datetime.now().strftime("%m"))
+  Hostname     = gethostname().split('.')[0]
+  SqlHeader    = '/***** ' + CmdDesc.upper() + ' *****/'
+  ModelDict    = {}
+  LastPeriod   = ''
+  Failures     = 0
+  Colsep       = '~'
+  Setsep       = '!!!EOF!!!'
+  ConnStr      = ''
+
+  # For handling termination in stdout pipe; ex: when you run: oerrdump | head
+  signal(SIGPIPE, SIG_DFL)
+
+  # ------------------------------------------------
+  # Imports that are conditional on Python Version.
+  # ------------------------------------------------
+  if (version_info[0] >= 3):
+    from configparser import SafeConfigParser
+  else:
+    from ConfigParser import SafeConfigParser
+  # ------------------------------------------------
+
+  Usage += Cmd + ' -s SCHEMA -t TABLE [-p PERIOD][-o {ORACLE_HOME}] [--v]'
+  Usage += '\n\n Where: SCHEMA is the owner of the table.'
+  Usage += '\n        TABLE  is the base table name (without the _YYYYMM postfix)'
+  Usage += '\n        PERIOD is the YYYYMM postfix for the current month (also used to'
+  Usage += '\n               formulate prior month postfix). Defaults to current month. '
+  Usage += '\n\n-------------------------------------------------------------------------------'
+  Usage += '\nRun various validation checks to determine readiness for month end data load.'
+  Usage += '\n  - Table Exists'
+  Usage += '\n  - Partition Exists'
+  Usage += '\n  - Subpartition Exists'
+  Usage += '\n  - Partition definition matches the expected HIGH_VALUE using the previous month'
+  Usage += '\n    partition as a reference.'
+  Usage += '\n  - Subpartition definition matches the expected HIGH_VALUE using the previous month'
+  Usage += '\n    subpartition as a reference.'
+  ArgParser = OptionParser(Usage)
+
+  # Process command line options
+  # ----------------------------------
+  ArgParser = OptionParser('\n\n' + Usage)
+  ArgParser.add_option("-o",                       dest="Owner",       default='',                   type=str, help="Owner (Table Owner)")
+  ArgParser.add_option("-p",                       dest="Period",       default=ThisYear + ThisMonth, type=str, help="Period (YYYYMM")
+  ArgParser.add_option("-t",                       dest="Table",        default='',                   type=str, help="Table Name")
+  ArgParser.add_option("--v", action="store_true", dest="ShowVer",      default=False,                          help="Version Information")
+
+  Options, args = ArgParser.parse_args()
+  argc = len(args)
+
+  ThisPeriod   = Options.Period
+  Owner        = Options.Owner
+  Table        = Options.Table
+  ShowVer      = Options.ShowVer
+
+  if (ShowVer):
+    print('\n%s' % Banner)
+    exit()
+
+  # Start logging - Everything from stdout will be logged from this point.
+  # -----------------------------------------------------------------------
+  LogTime = datetime.now().strftime("%Y%m%d.%H%M%S")
+  LogFile = pathjoin(LogDir, Cmd + '.' + LogTime + '.log')
+  try:
+    Log = open(LogFile, 'wb')
+    Log.close()
+  except:
+    print('\nUnable to to open log file for write: %s' % LogFile)
+    exit(1)
+  sys.stdout = Logger(LogFile)
+
+  # Validate Owner name
+  # ---------------------
+  if(Owner == ''):
+    if(version_info[0] >= 3):
+      Owner = input('\nEnter Table Owner: ')
+    else:
+      Owner = raw_input('\nEnter Table Name: ')
+    if(Owner == ''):
+      print('\nOwner is required, ex:\n\n    %s -o CDCI_LOADER' % (Cmd))
+      exit(1)
+    Owner = Owner.upper()   
+
+  # Validate Table name
+  # ---------------------
+  if(Table == ''):
+    if(version_info[0] >= 3):
+      Table = input('\nEnter Table Name: ')
+    else:
+      Table = raw_input('\nEnter Table Name: ')
+    if(Table == ''):
+      print('\nTable name is required, ex:\n\n    %s -t EXCH_ACCT_SCORE_FACT' % (Cmd))
+      exit(1)
+    Table = Table.upper()
+
+
+  # Validate ORACLE_HOME
+  # ---------------------
+  if('ORACLE_HOME' in list(environ.keys())):
+    OracleHome = environ['ORACLE_HOME']
+  else:
+    if(version_info[0] >= 3):
+      OracleHome = input('\nEnter ORACLE_HOME: ')
+    else:
+      OracleHome = raw_input('\nEnter ORACLE_HOME: ')
+    if(OracleHome == ''):
+      print('\nOracle home is required, for example:\n\n export ORACLE_HOME=/u01/app/oracle/product/11.2.0.4/dbhome_1')
+      exit(1)
+  OracleBin  = pathjoin(OracleHome, 'bin')
+
+  # Parse the connect string if any, prompt for username, password if needed.
+  if (len(args) > 0):
+    InStr = args[0]
+    ConnStr = ParseConnectString(InStr)
+
+  # Validate ORACLE_SID
+  # ---------------------
+  if (ConnStr == '' or ConnStr.strip().upper() == '/ AS SYSDBA'):
+    if('ORACLE_SID' in list(environ.keys())):
+      OracleSid = environ['ORACLE_SID']
+    else:
+      if(version_info[0] >= 3):
+        OracleSid = input('\nEnter ORACLE_SID: ')
+      else:
+        OracleSid = raw_input('\nEnter ORACLE_SID: ')
+      if(OracleSid == ''):
+        print('\nOracle SID is required, for example:\n\n export ORACLE_SID=MYDB')
+        exit(1)
+
+  # Validate ThisPeriod
+  # ---------------------
+  if (not ThisPeriod.isdigit() or len(ThisPeriod) != 6) :
+    print('\nPeriod must be a valid date in the form of YYYYMM).')
+    print('\n%s' % Usage)
+    exit(1)
+  elif ((int(str(ThisPeriod)[4:6]) < 1) or (int(str(ThisPeriod)[4:6]) > 12)) :
+    print('\n\nPeriod must be a valid date in the form of YYYYMM) and MM between 01 and 12.')
+    print('\n%s' % Usage)
+    exit(1)
+  elif (int(str(ThisPeriod)[0:4]) < 2017) :
+    print('\nPeriod must be a valid date in the form of YYYYMM) and YYYY >= 2017.')
+    print('\n%s' % Usage)
+    exit(1)
+
+  # Set LastPeriod
+  # ---------------------
+  if (ThisPeriod[4:6] == '01'):
+    LastPeriod = str(int(ThisPeriod[0:4])-1) + '12'
+  else:
+    LastPeriod = str(int(ThisPeriod)-1)
+
+  # Set current table and last period table.
+  # ------------------------------------------
+  ThisTable  = Table + '_' + ThisPeriod
+  LastTable  = Table + '_' + LastPeriod
+
+
+  print('\n============================================================================================================================')
+  print('%s: Release %s Production, %28s %35s' % (CmdDesc, Version, VersionDate, Now.strftime("%Y-%m-%d %H:%M")))
+  print('============================================================================================================================\n')
+  print('Oracle Home               : %s' % OracleHome)
+  print('Owner                     : %s' % Owner)
+  print('Table                     : %s' % Table)
+  print('This Period               : %s' % ThisPeriod)
+  print('Last Period               : %s' % LastPeriod)
+
+  # Validation #1
+  # -------------------
+  print('\n----------------------------------------------------------------------------------------------------------------------------')
+  ThisTabFound = ObjectExists(Owner, 'TABLE', Table + '_' + ThisPeriod)
+  LastTabFound = ObjectExists(Owner, 'TABLE', Table + '_' + LastPeriod)
+
+  if (ThisTabFound and LastTabFound):
+    print('Validation #1: Pass')
+  else:
+    Failures += 1
+    print('Validation #1: Fail')
+
+  print('Description  : Ensure the table for the current period and the table for last periood exist.\n')
+  print('  %-30s %-30s %-6s' % ('Owner' , 'Table', 'Found'))
+  print('  %-30s %-30s %-6s' % ('-'*30, '-'*30, '-'*6))
+  print('  %-30s %-30s %-6s' % (Owner, Table + '_' + ThisPeriod, ThisTabFound))
+  print('  %-30s %-30s %-6s' % (Owner, Table + '_' + LastPeriod, LastTabFound))
+
+  # Validation #2-3
+  # -------------------
+  if (Failures == 0) :
+    print('\n------------------------------------------------------------------------------------------------------------------------------')
+    (Result, Msg) = Val2(Owner, Table, ThisPeriod, LastPeriod)
+  
+    if (Result == True):
+      print('Validation #2-3: Pass')
+    else:
+      print('Validation #2-3: Fail')
+  
+    print('Description  : Check for any missing or malformed partitions.')
+  
+    if (Result == False):
+      print(Msg)
+  
+  # Validation #4
+  # -------------------
+  if (Failures == 0) :
+    print('\n------------------------------------------------------------------------------------------------------------------------------')
+    (Result, Msg) = Val4(Owner, Table, ThisPeriod, LastPeriod)
+    
+    if (Result == True):
+      print('Validation #4: Pass')
+    else:
+      print('Validation #4: Fail')
+    
+    print('Description  : Check for any missing or malformed subpartitions.')
+    
+    if (Result == False):
+      print(Msg)
+
+  Now = datetime.now()
+  print('\n============================================================================================================================')
+  print('Process complete%108s' % Now.strftime("%Y-%m-%d %H:%M"))
+  print('============================================================================================================================')
+  exit(0)
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------

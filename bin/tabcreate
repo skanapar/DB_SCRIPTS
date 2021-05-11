@@ -1,0 +1,915 @@
+#!/bin/env python
+
+###################################################################################################
+# Name:         tabcreate                                                                         #
+# Author:       Randy Johnson                                                                     #
+# Description:  Create partitioned table for data load and partition exchange process.            #
+# Dependencies: Oracle client including sqlplus.                                                  #
+#                                                                                                 #
+# Wish List:                                                                                      #
+#  - Add Logger to the script. (See man logger                                                    #
+#  - Email enable.                                                                                #
+#                                                                                                 #
+# History:                                                                                        #
+#                                                                                                 #
+# Date       Ver. Who              Change Description                                             #
+# ---------- ---- ---------------- -------------------------------------------------------------- #
+# 08/10/2016 1.00 Randy Johnson    Initial release.                                               #
+# 08/16/2016 1.10 Randy Johnson    Add logic to extract partition keys from                       #
+#                                  dba_subpart_key_columns                                        #
+# 08/20/2017 1.20 Randy Johnson    Added Python version logic for importing SafeConfigParser.     #
+#                                  Changed '/home/oracle/dba/etc' to DbaEtc in Config File name.  #
+###################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+import traceback
+import sys
+from datetime     import datetime
+from optparse     import OptionParser
+from os           import environ
+from os.path      import basename
+from os.path      import join as pathjoin
+from sys          import argv
+from sys          import exit
+from sys          import version_info
+from sys          import stdout
+from signal       import SIGPIPE
+from signal       import SIG_DFL
+from signal       import signal
+from socket       import gethostname
+from subprocess   import Popen
+from subprocess   import PIPE
+from subprocess   import STDOUT
+from Oracle       import IsExecutable
+from Oracle       import IsReadable
+from Oracle       import Logger
+from Oracle       import RunSqlplus
+from Oracle       import SetOracleEnv
+from Oracle       import PrintError
+from Oracle       import ParseConnectString
+from Oracle       import GetParameter
+
+if (version_info[0] >= 3):
+  from configparser import SafeConfigParser
+else:
+  from ConfigParser import SafeConfigParser
+
+# ---------------------------------------------------------------------------
+# Def : LoadConfig()
+# Desc: Loads dictionary structure with key/value pairs from a config
+#       file.
+# Args: ConfigFile = the name of the configuration file.
+# Retn: ConfigDict = Dictionary containing configuration properties.
+# ---------------------------------------------------------------------------
+def LoadConfig(ConfigFile):
+  Parms      = SafeConfigParser()
+  ConfigDict = {}
+
+  # Load the parameter file.
+  # -----------------------------
+  try:
+    Parms.read(ConfigFile)
+  except:
+    print('\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<');
+    print('Parsing error in parameter file: %s' % ConfigFile)
+    print('Default values will be used for all parameters.')
+    print('\n%s' % traceback.format_exc())
+    print('>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<');
+    exit(1)
+
+  # Load configuration parameters into ConfigDict dictionary...
+  for Section in sorted(Parms.sections()):
+    Key = Section.upper()
+    for Option in sorted(Parms.options(Section)):
+      Option = Option.upper()
+      if (Option in AttrList):
+        Value = Parms.get(Section, Option)
+        if(Key not in ConfigDict):
+          ConfigDict[Key] = {}
+        ConfigDict[Key][Option.upper()] = Value
+
+  for key in ConfigDict:
+    for Attr in AttrList:
+      if (Attr.upper() not in AttrList):
+        ConfigDict[key][Attr.upper()] = ''
+
+  return(ConfigDict)
+# ---------------------------------------------------------------------------
+# End LoadConfig()
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Def : ObjectExists()
+# Desc: Checks for existance of object by owner, by type, by name.
+# Args: Owner, Type, Name
+# Retn: True/False
+# ---------------------------------------------------------------------------
+def ObjectExists(Owner, Type, Name):
+
+  Sql  = "set heading  off\n"
+  Sql += "set pagesize 0\n"
+  Sql += "set feedback off\n"
+  Sql += "set echo     off\n"
+  Sql += "\n"
+  Sql += "SELECT " + SqlHeader + "\n"
+  Sql += "       count(*)\n"
+  Sql += "  FROM dba_objects\n"
+  Sql += " WHERE owner = '" + Owner + "'\n"
+  Sql += "   AND object_type = '" + Type.upper() + "'\n"
+  Sql += "   AND object_name = '" + Name + "';"
+
+  #(rc,Stdout,ErrorList) = RunSqlplus(Sql, True)
+
+  if (ConnStr != ''):
+    (rc, Stdout, ErrorList) = RunSqlplus(Sql, True, ConnStr)
+  else:
+    (rc, Stdout, ErrorList) = RunSqlplus(Sql, True)
+
+  if (rc != 0) :
+    PrintError(Sql, Stdout, ErrorList)
+    exit(1)
+
+  if (Stdout.strip() == '1') :
+    return(True)
+  else:
+    return(False)
+# ---------------------------------------------------------------------------
+# End ObjectExists()
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Def : GetColDef()
+# Desc: Extracts DDL values for a table so they can be used to formulate
+#       create table DDL.
+# Args: Owner, Table, PartitionName
+# Retn: SubpartDict{} = Dictionary of partition values.
+# ---------------------------------------------------------------------------
+def GetColDef(Owner, Table):
+  ColDict   = {}
+
+  Sql  = "set heading  off\n"
+  Sql += "set pagesize 0\n"
+  Sql += "set feedback off\n"
+  Sql += "set echo     off\n"
+  Sql += "\n"
+  Sql += "SELECT " + SqlHeader + "\n"
+  Sql += "       column_id"                  + " || '" + Colsep + "' ||\n"
+  Sql += "       column_name"                + " || '" + Colsep + "' ||\n"
+  Sql += "       data_type"                  + " || '" + Colsep + "' ||\n"
+  Sql += "       data_length"                + " || '" + Colsep + "' ||\n"
+  Sql += "       data_precision"             + " || '" + Colsep + "' ||\n"
+  Sql += "       data_scale"                 + " || '" + Colsep + "' ||\n"
+  Sql += "       char_used"                  + " || '" + Colsep + "' ||\n"
+  Sql += "       nullable\n"
+  Sql += "  FROM dba_tab_columns\n"
+  Sql += " WHERE owner = '" + Owner + "'\n"
+  Sql += "   AND table_name = '" + Table + "'\n"
+  Sql += " ORDER BY column_id;"
+
+  if (ConnStr != ''):
+    (rc, Stdout, ErrorList) = RunSqlplus(Sql, True, ConnStr)
+  else:
+    (rc, Stdout, ErrorList) = RunSqlplus(Sql, True)
+
+
+
+  if (rc != 0) :
+    PrintError(Sql, Stdout, ErrorList)
+    exit(1)
+
+  if (rc != 0):
+    print("\nError Processing GetTableDef SQL")
+    print("------------------------------------------------------------------------------")
+    print(Sql)
+    print("------------------------------------------------------------------------------")
+    PrintError(rc, Stdout, ErrorList)
+    return(1, ColDict)
+
+  for line in Stdout.split('\n'):
+    if ((line != '') and (line.count(Colsep) == 7)):
+      ColumnId = int(line.split(Colsep)[0].strip())
+      ColDict[ColumnId] = {}
+      ColDict[ColumnId]['COLUMN_NAME']    = line.split(Colsep)[1].strip()
+      ColDict[ColumnId]['DATA_TYPE']      = line.split(Colsep)[2].strip()
+      ColDict[ColumnId]['DATA_LENGTH']    = line.split(Colsep)[3].strip()
+      ColDict[ColumnId]['DATA_PRECISION'] = line.split(Colsep)[4].strip()
+      ColDict[ColumnId]['DATA_SCALE']     = line.split(Colsep)[5].strip()
+      ColDict[ColumnId]['CHAR_USED']      = line.split(Colsep)[6].strip()
+      ColDict[ColumnId]['NULLABLE']       = line.split(Colsep)[7].strip()
+    else:
+      print("\nInvalid results from GetTableDef SQL")
+      print("------------------------------------------------------------------------------")
+      print(line.split(Colsep))
+      print("------------------------------------------------------------------------------")
+      return(1, ColDict)
+
+  return(rc, ColDict)
+# ---------------------------------------------------------------------------
+# End GetColDef()
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Def : GetSubartKey()
+# Desc: Extracts subpartition key from dba_subpart_key_columns
+# Args: Owner, Table
+# Retn: SubpartDict{} = Dictionary of partition values.
+# ---------------------------------------------------------------------------
+def GetSubartKey(Owner, Table):
+  Sql  = "set heading  off\n"
+  Sql += "set pagesize 0\n"
+  Sql += "set feedback off\n"
+  Sql += "set echo     off\n"
+  Sql += "\n"
+  Sql += "SELECT " + SqlHeader + "\n"
+  Sql += "       column_name\n"
+  Sql += "  FROM dba_subpart_key_columns\n"
+  Sql += " WHERE owner = '" + Owner + "'\n"
+  Sql += "   AND name = '" + Table + "';"
+
+  if (ConnStr != ''):
+    (rc, Stdout, ErrorList) = RunSqlplus(Sql, True, ConnStr)
+  else:
+    (rc, Stdout, ErrorList) = RunSqlplus(Sql, True)
+
+  if (rc != 0) :
+    PrintError(Sql, Stdout, ErrorList)
+    exit(1)
+
+  if (rc != 0):
+    print("\nError Processing GetTableDef SQL")
+    print("------------------------------------------------------------------------------")
+    print(Sql)
+    print("------------------------------------------------------------------------------")
+    PrintError(rc, Stdout, ErrorList)
+    return(1, Stdout)
+
+  return(rc, Stdout)
+# ---------------------------------------------------------------------------
+# End GetSubartKey()
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Def : GetSubpartDef()
+# Desc: Retrieves a list of a table's subpartitions.
+# Args: Owner, Name
+# Retn: Dictinary of subpartitions.
+# ---------------------------------------------------------------------------
+def GetSubpartDef(Owner, Table):
+  SubpartDict  = {}
+
+  Sql  = "set heading  off\n"
+  Sql += "set colsep   " + Colsep + "\n"
+  Sql += "set pagesize 0\n"
+  Sql += "set linesize 32767\n"
+  Sql += "set feedback off\n"
+  Sql += "set echo     off\n"
+  Sql += "set long     10000\n"
+  Sql += "column high_value format a3000"
+  Sql += "\n"
+  Sql += "SELECT " + SqlHeader + "\n"
+  Sql += "       subpartition_position\n"
+  Sql += "      ,subpartition_name\n"
+  Sql += "      ,high_value\n"
+  Sql += "      ,ini_trans\n"
+  Sql += "      ,max_trans\n"
+  Sql += "      ,pct_free\n"
+  Sql += "      ,pct_used\n"
+  Sql += "      ,logging\n"
+  Sql += "      ,compression\n"
+  Sql += "      ,compress_for\n"
+  Sql += "      ,buffer_pool\n"
+  Sql += "      ,flash_cache\n"
+  Sql += "      ,cell_flash_cache\n"
+  Sql += "  FROM dba_tab_subpartitions\n"
+  Sql += " WHERE table_owner = '" + Owner + "'\n"
+  Sql += "   AND table_name = '" + Table + "';"
+
+  if (ConnStr != ''):
+    (rc, Stdout, ErrorList) = RunSqlplus(Sql, True, ConnStr)
+  else:
+    (rc, Stdout, ErrorList) = RunSqlplus(Sql, True)
+
+  if (rc != 0) :
+    PrintError(Sql, Stdout, ErrorList)
+    exit(1)
+
+  if (rc != 0):
+    print("\nError Processing GetSubpartDef SQL")
+    print("------------------------------------------------------------------------------")
+    print(Sql)
+    print("------------------------------------------------------------------------------")
+    PrintError(rc, Stdout, ErrorList)
+    return(1, SubpartDict)
+
+  for line in Stdout.split('\n'):
+    if ((line != '') and (line.count(Colsep) == 12)):
+      PartPos = int(line.split(Colsep)[0].strip())
+      SubpartDict[PartPos] = {}
+      SubpartDict[PartPos]['PARTITION_NAME']     = line.split(Colsep)[1].strip()
+      SubpartDict[PartPos]['HIGH_VALUE']         = line.split(Colsep)[2].strip()
+      SubpartDict[PartPos]['INI_TRANS']          = line.split(Colsep)[3].strip()
+      SubpartDict[PartPos]['MAX_TRANS']          = line.split(Colsep)[4].strip()
+      SubpartDict[PartPos]['PCT_FREE']           = line.split(Colsep)[5].strip()
+      SubpartDict[PartPos]['PCT_USED']           = line.split(Colsep)[6].strip()
+      SubpartDict[PartPos]['LOGGING']            = line.split(Colsep)[7].strip()
+      SubpartDict[PartPos]['COMPRESSION']        = line.split(Colsep)[8].strip()
+      SubpartDict[PartPos]['COMPRESS_FOR']       = line.split(Colsep)[9].strip()
+      SubpartDict[PartPos]['BUFFER_POOL']        = line.split(Colsep)[10].strip()
+      SubpartDict[PartPos]['FLASH_CACHE']        = line.split(Colsep)[11].strip()
+      SubpartDict[PartPos]['CELL_FLASH_CACHE']   = line.split(Colsep)[12].strip()
+    else:
+      print("\nInvalid results from GetSubpartDef SQL")
+      print("------------------------------------------------------------------------------")
+      print(line.split(Colsep))
+      print("------------------------------------------------------------------------------")
+      return(1, SubpartDict)
+
+  return(rc, SubpartDict)
+# ---------------------------------------------------------------------------
+# End GetSubpartDef()
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Def : GenCreateTable()
+# Desc: Generate DDL to create tables
+# Args: ColDict = Dictionary of table attributes
+#       SubpartDict = Dictinary of partition attributes
+# Retn: DDL (string)
+# ---------------------------------------------------------------------------
+def GenCreateTable(Owner, Table, ColDict, SubpartDict, PartKey):
+  DDL = "CREATE TABLE " + Owner + "." + Table + " (\n"
+  Pieces = []
+
+  for ColumnId in sorted(ColDict):
+    ColumnName     = ColDict[ColumnId]['COLUMN_NAME']
+    DataType       = ColDict[ColumnId]['DATA_TYPE']
+    DataLength     = ColDict[ColumnId]['DATA_LENGTH']
+    DataPrecision  = ColDict[ColumnId]['DATA_PRECISION']
+    DataScale      = ColDict[ColumnId]['DATA_SCALE']
+    CharUsed       = ColDict[ColumnId]['CHAR_USED']
+    Nullable       = ColDict[ColumnId]['NULLABLE']
+
+    if (DataType == 'DATE'):
+      Pieces.append('%-50s %s' % (ColumnName, DataType))
+    else:
+      if (DataType == 'VARCHAR2'):
+        if (CharUsed == 'B'):
+          Pieces.append('%-50s %s(%s BYTE)' % (ColumnName, DataType, DataLength))
+        else:
+          Pieces.append('%-50s %s(%s CHAR)' % (ColumnName, DataType, DataLength))
+      else:
+        if (DataPrecision == ''):
+          Pieces.append('%-50s %s(%s)' % (ColumnName, DataType, DataLength))
+        else:
+          Pieces.append('%-50s %s(%s,%s)' % (ColumnName, DataType, DataPrecision, DataScale))
+
+  DDL += '   ' + '\n  ,'.join(Pieces)
+  DDL += '\n  )'
+  if (Logging == True):
+    DDL += '\n  LOGGING'
+  DDL += '\n  STORAGE(' + Storage + ')'
+  DDL += '\n  TABLESPACE ' + Tablespace
+  if (CompressFor != ''):
+    DDL += '\n  COMPRESS FOR ' + CompressFor
+  DDL += '\n  PARTITION BY LIST (' + PartKey + ') (\n'
+
+  PartDDL = []
+  for PartId in sorted(SubpartDict):
+    PartName           = ''
+    PartBufferPool     = 'DEFAULT'
+    PartCellFlashCache = 'DEFAULT'
+    PartCompressFor    = ''
+    PartCompression    = ''
+    PartFlashCache     = 'DEFAULT'
+    PartIniTrans       = '1'
+    PartLogging        = True
+    PartMaxTrans       = '255'
+    PartPctFree        = '0'
+    PartPctUsed        = ''
+    Partition          = ''
+
+    try:
+      if (SubpartDict[PartId]['LOGGING'].upper() == 'YES'):
+        PartLogging = True
+      else:
+        PartLogging = False
+    except:
+      print('\nLOGGING missing from source definition. Defaulting to: YES')
+
+    try:
+      PartName = SubpartDict[PartId]['PARTITION_NAME']
+    except:
+      pass
+
+    try:
+      PartCompression = SubpartDict[PartId]['COMPRESSION']
+    except:
+      pass
+
+    try:
+      PartCompressFor = SubpartDict[PartId]['COMPRESS_FOR']
+    except:
+      print('\nCOMPRESS_FOR missing from source definition. Defaulting to: ""')
+
+    try:
+      PartPctFree = SubpartDict[PartId]['PCT_FREE']
+    except:
+      print('\nPCT_FREE missing from source definition. Defaulting to: 0')
+
+    try:
+      PartPctUsed = SubpartDict[PartId]['PCT_USED']
+    except:
+      print('\nPCT_USED missing from source definition. Defaulting to: ""')
+
+    try:
+      PartHighValue = SubpartDict[PartId]['HIGH_VALUE']
+    except:
+      print('\nHIGH_VALUE missing from source definition.')
+      print(SubpartDict[PartId])
+      exit(1)
+
+    try:
+      PartBufferPool = SubpartDict[PartId]['BUFFER_POOL']
+    except:
+      print('\nBUFFER_POOL missing from source definition. Defaulting to: DEFAULT')
+
+    try:
+      PartCellFlashCache = SubpartDict[PartId]['CELL_FLASH_CACHE']
+    except:
+      print('\nCELL_FLASH_CACHE missing from source definition. Defaulting to: DEFAULT')
+
+    try:
+      PartFlashCache = SubpartDict[PartId]['FLASH_CACHE']
+    except:
+      print('\nFLASH_CACHE missing from source definition. Defaulting to: DEFAULT')
+
+    try:
+      PartIniTrans = SubpartDict[PartId]['INI_TRANS']
+    except:
+      print('\nINI_TRANS missing from source definition. Defaulting to: 1')
+
+    try:
+      PartMaxTrans = SubpartDict[PartId]['MAX_TRANS']
+    except:
+      print('\nMAX_TRANS missing from source definition. Defaulting to: 255')
+
+    PartPost = ''
+    if (PartId < 10):
+      PartPost = 'SP0' + str(PartId)
+    else:
+      PartPost = 'SP' + str(PartId)
+
+    if (PartName == ''):
+      Partition = PartPost
+    else:
+      try:
+        Partition = ''.join(PartName.split('_')[-2:-1]) + '_' + PartPost
+      except:
+        Partition = PartPost
+
+    TmpStr  = 'PARTITION %-12s VALUES (%s)' % (Partition, SubpartDict[PartId]['HIGH_VALUE'])
+    TmpStr += '\n%26s STORAGE(%s)' % ('', PartStorage)
+
+    if (PartLogging == True):
+      TmpStr += ' LOGGING'
+    else:
+      TmpStr += ' NOLOGGING'
+
+    TmpStr += ' TABLESPACE ' + Tablespace
+    PartDDL.append(TmpStr)
+
+  DDL += '    ' + '\n   ,'.join(PartDDL) + '\n  );'
+
+  return(DDL)
+# ---------------------------------------------------------------------------
+# End GenCreateTable()
+# ---------------------------------------------------------------------------
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  Cmd              = basename(argv[0])
+  CmdDesc          = 'Partition Maintenance (' + Cmd + ')'
+  Version          = '1.20'
+  VersionDate      = 'Sun Aug 20 11:23:57 CDT 2017'
+  DevState         = 'Test'
+  Banner           = CmdDesc + ': Release ' + Version + ' '  + DevState + '. Last updated: ' + VersionDate
+  Now              = datetime.now()
+  OracleHome       = ''
+  DbName           = ''
+  DbUniqueName     = ''
+  Dbca             = ''
+  EtcDir           = '/home/oracle/dba/etc'
+  TmpDir           = '/home/oracle/dba/tmp'
+  LogDir           = '/home/oracle/dba/log'
+  OraVer           = ''
+  Usage            = ''
+  ThisYear         = str(datetime.now().strftime("%Y"))
+  ThisMonth        = str(datetime.now().strftime("%m"))
+  Hostname         = gethostname().split('.')[0]
+  SqlHeader        = '/***** ' + CmdDesc.upper() + ' *****/'
+  ModelDict        = {}
+  Colsep           = "~"
+  MainRc           = 0
+  SrcOwner         = ''
+  SrcTable         = ''
+  NewTable         = ''
+  TabList          = []
+  SrcTableList     = []
+  TabDict          = {}
+  ParseOpen        = '{'
+  ParseClose       = '}'
+  ConnStr          = ''
+  CrTabList        = []
+  AddPartList      = []
+  Script           = pathjoin(TmpDir, Cmd + '.sql')
+  AttrList = []
+  AttrList.append('OWNER')
+  AttrList.append('SOURCE_TABLE')
+  AttrList.append('SOURCE_OWNER')
+  AttrList.append('TABLESPACE_NAME')
+  AttrList.append('COMPRESS_FOR')
+  AttrList.append('PARTITION_STORAGE')
+  AttrList.append('STORAGE')
+  AttrList.append('LOGGING')
+
+  # For handling termination in stdout pipe; ex: when you run: oerrdump | head
+  signal(SIGPIPE, SIG_DFL)
+
+  # ------------------------------------------------
+  # Imports that are conditional on Python Version.
+  # ------------------------------------------------
+  if (version_info[0] >= 3):
+    from configparser import SafeConfigParser
+  else:
+    from ConfigParser import SafeConfigParser
+  # ------------------------------------------------
+
+  Usage += Cmd + ' -f {CONFIG_FILE} [-p {PERIOD}] [-o {ORACLE_HOME}] [-r] [--s] [--t] [--v]'
+  Usage += '\n\nExample:'
+  Usage += '\n         ' + Cmd + ' -f ' + pathjoin(DbaEtc,Cmd + '.cfg') + ' -t exch_acct_score_fact'
+  Usage += '\n         ' + Cmd + ' -t exch_acct_score_fact -r'
+  Usage += '\n         ' + Cmd + ' -h'
+  Usage += '\n         ' + Cmd + ' --v'
+  ArgParser = OptionParser(Usage)
+
+  # Process command line options
+  # ----------------------------------
+  ArgParser = OptionParser('\n\nGenerate DDL for adding a new partitioned exchange table for the data load process.\n\n' + Usage)
+  ArgParser.add_option("-e",  action="store_true", dest="Execute",      default=False,                            help="Execute DDL Generated")
+  ArgParser.add_option("-f",                       dest="ConfigFile",   default='',                     type=str, help="Configuration File")
+  ArgParser.add_option("-o",                       dest="OracleHome",   default='',                     type=str, help="ORACLE_HOME")
+  ArgParser.add_option("-p",                       dest="Period",       default=ThisYear + ThisMonth,   type=str, help="Period (YYYYMM)")
+  ArgParser.add_option("-t",                       dest="Tables",       default='',                     type=str, help="Comma selimited list of tables to create")
+  ArgParser.add_option("-s",  action="store_true", dest="Silent",       default=False,                            help="Silent mode. No prompts.")
+  ArgParser.add_option("-r",  action="store_true", dest="ReportConfig", default=False,                            help="Report Configuration")
+  ArgParser.add_option("-v",  action="store_true", dest="Version",      default=False,                            help="Version Information")
+
+  Options, args = ArgParser.parse_args()
+  argc = len(args)
+
+  # Initalize Command Line Options
+  # ------------------------------------
+  ConfigFile    = Options.ConfigFile
+  OracleHome    = Options.OracleHome
+  Period        = Options.Period
+  ReportConfig  = Options.ReportConfig
+  Execute       = Options.Execute
+  ShowVer       = Options.Version
+  Silent        = Options.Silent
+  Tables        = Options.Tables
+  
+  if (ShowVer):
+    print('\n%s' % Banner)
+    exit()
+
+  # Set default config file name...
+  # ----------------------------------
+  if (ConfigFile == ''):
+    ConfigFile = pathjoin(DbaEtc,Cmd + '.cfg')
+
+  # Load the config file
+  # -----------------------
+  if (not IsReadable(ConfigFile)):
+    print('\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<');
+    print('Cannot open parameter file for read: %s' % ConfigFile)
+    print('>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<');
+    exit(1)
+  else:
+    # Load up the config file
+    ConfigDict = LoadConfig(ConfigFile)
+
+  # Print a report of all sections, options, and values in the config file.
+  # -------------------------------------------------------------------------
+  if(ReportConfig == True):
+    for Section in sorted(ConfigDict):
+      print('\n%s' % Section)
+      print('----------------------------------------------------------------------------------')
+      for Option in sorted(ConfigDict[Section]):
+        Value = ConfigDict[Section][Option]
+        print('%-50s = %-70s' % (Option, Value))
+    exit(0)
+
+  # Start logging - Everything from stdout will be logged from this point.
+  # -----------------------------------------------------------------------
+  LogTime = datetime.now().strftime("%Y%m%d.%H%M%S")
+  LogFile = pathjoin(LogDir, Cmd + '.' + LogTime + '.log')
+  try:
+    Log = open(LogFile, 'wb')
+    Log.close()
+  except:
+    print('\nUnable to to open log file for write: %s' % LogFile)
+    exit(1)
+  sys.stdout = Logger(LogFile)
+
+  # Parse Connect string (if any)
+  # -------------------------------
+  if (len(args) > 0):
+    InStr = args[0]
+    ConnStr = ParseConnectString(InStr)
+
+  # Setup ORACLE_SID
+  # -----------------
+  if (Execute == True and ConnStr == ''):
+    if ('ORACLE_SID' in environ):
+      OracleSid = environ['ORACLE_SID']
+    else:
+      if(version_info[0] >= 3):
+        OracleSid = input('\nEnter ORACLE_SID: ')
+      else:
+        OracleSid = raw_input('\nEnter ORACLE_SID: ')
+        if(OracleSid != ''):
+          environ['ORACLE_SID'] = OracleSid
+        else:
+          print('\nORACLE_SID is required')
+          print('\n  example:    export ORACLE_SID=MYDB')
+          exit(1)
+
+  # Setup ORACLE_HOME
+  # -------------------
+  if (OracleHome != ''):
+    environ['ORACLE_HOME'] = OracleHome
+  else:
+    if ('ORACLE_HOME' in environ):
+      OracleHome = environ['ORACLE_HOME']
+    else:
+      if(version_info[0] >= 3):
+        OracleHome = input('\nEnter ORACLE_HOME: ')
+      else:
+        OracleHome = raw_input('\nEnter ORACLE_HOME: ')
+      if(OracleHome == ''):
+        print('\nORACLE_HOME is required.')
+        print('\n  example:    %s -o /u01/app/oracle/product/11.2.0.3/dbhome_1' % (Cmd))
+        print('       or:    export ORACLE_HOME=/u01/app/oracle/product/11.2.0.3/dbhome_1')
+        exit(1)
+    OracleBin  = pathjoin(OracleHome, 'bin')
+
+  # Validate Table input and build a list of tables to process.
+  # ------------------------------------------------------------
+  if (Tables == ''):
+    TabList = list(ConfigDict)
+  else:
+    # Validate Table
+    # ---------------------
+    if( Tables == ''):
+      if(version_info[0] >= 3):
+        Tables = input('\nEnter Comma Delimited List of Tables to Create: ')
+      else:
+        Tables = raw_input('\nEnter Comma Delimited List of Tables to Create: ')
+      if(Tables == ''):
+        print('\nTable name is required, ex:\n\n    %s -t exch_acct_score_fact' % (Cmd))
+        exit(1)
+    TabList = ''.join(Tables.upper().split()).split(',')
+
+    # Remove any duplicates in TabList
+    # ----------------------------------
+    TabList = list(set(TabList))
+
+    # Remove any empty items in TabList
+    # ----------------------------------
+    try:
+      TabList.remove('')
+    except:
+      pass
+
+    # Remove any tables that don't exist in ConfigFile.
+    for Table in sorted(TabList):
+      if (Table not in ConfigDict):
+        print('\nWARNING: %s not found in config file: %s' % (Table, ConfigFile))
+        print('         Removing table from Table List')
+        TabList.remove(Table)
+        MainRc += 1
+
+  # If no tables specified have entries in the configuration file. Ex. [MYTAB]
+  if (TabList == []):
+    print('\nNOTICE: No tables to process.')
+    exit(MainRc)
+
+  # Validate Period
+  # ---------------------
+  if (not Period.isdigit() or len(Period) != 6) :
+    print('\nPeriod must be a valid date in the form of YYYYMM).')
+    print('\n%s' % Usage)
+    exit(1)
+  elif ((int(str(Period)[4:6]) < 1) or (int(str(Period)[4:6]) > 12)) :
+    print('\n\nPeriod must be a valid date in the form of YYYYMM) and MM between 01 and 12.')
+    print('\n%s' % Usage)
+    exit(1)
+  elif (int(str(Period)[0:4]) < 2017) :
+    print('\nPeriod must be a valid date in the form of YYYYMM) and YYYY >= 2017.')
+    print('\n%s' % Usage)
+    exit(1)
+
+  # Read in and validate all config file parameters.
+  # -------------------------------------------------
+  for Table in TabList:
+    TabDict[Table] = {}
+    TabDict[Table]['OWNER']                      = ConfigDict[Table]['OWNER'].upper()
+    TabDict[Table]['PARTITION_STORAGE']          = ConfigDict[Table]['PARTITION_STORAGE'].upper()
+    TabDict[Table]['TABLESPACE_NAME']            = ConfigDict[Table]['TABLESPACE_NAME'].upper()
+    TabDict[Table]['SOURCE_OWNER']               = ConfigDict[Table]['SOURCE_OWNER'].upper()
+    TabDict[Table]['SOURCE_TABLE']               = ConfigDict[Table]['SOURCE_TABLE'].upper()
+    TabDict[Table]['COMPRESS_FOR']               = ConfigDict[Table]['COMPRESS_FOR'].upper()
+    TabDict[Table]['STORAGE']                    = ConfigDict[Table]['STORAGE'].upper()
+    if (ConfigDict[Table]['LOGGING'].upper()) == 'TRUE':
+      TabDict[Table]['LOGGING'] = True
+    else:
+      TabDict[Table]['LOGGING'] = False
+
+    # Handling for {} in the tablespace name
+    # ----------------------------------------
+    Tbs = ConfigDict[Table]['TABLESPACE_NAME'].upper()
+    if ((Tbs.count(ParseOpen) == 1) and (Tbs.count(ParseClose) == 1)):
+      (TbsPrefix, Remainder)  = Tbs.split(ParseOpen)
+      (Mask     , TbsPostfix) = Remainder.split(ParseClose)
+      if (Mask == 'YYYYMM'):
+        Mask = Period
+      elif (Mask == 'MMYYYY'):
+        Mask = Period[3:2] + Period[0:4]
+      elif (Mask == 'YYYY'):
+        Mask = Period[0:4]
+      elif (Mask == 'MM'):
+        Mask = Period[3:2]
+
+      TabDict[Table]['TABLESPACE_NAME'] = TbsPrefix + Mask + TbsPostfix
+
+    Found = ObjectExists(TabDict[Table]['SOURCE_OWNER'], 'Table', TabDict[Table]['SOURCE_TABLE'])
+    if (Found != True) :
+      print('\nWARNING: Source Table Not Found in Database: %s' % (TabDict[Table]['SOURCE_OWNER'] + '.' + TabDict[Table]['SOURCE_TABLE']))
+      print('         Removing table from list.')
+      del TabDict[Table]
+
+    if (Execute == True):
+      # Make sure the table you are about to create doesn't already exist...
+      # --------------------------------------------------------------------
+      for Table in sorted(TabDict):
+        NewTable = Table + '_' + Period
+        Owner = TabDict[Table]['OWNER']
+        Found = ObjectExists(Owner, 'Table', NewTable)
+        if (Found == True) :
+          print('\nWARNING: Table already exists: %s' % (Owner + '.' + NewTable))
+          print('         Removing table from list.')
+          del TabDict[Table]
+
+  if (Execute == False):
+    try:
+      s = open(Script, 'w')
+    except:
+      print('\nCannot open script file for write: %s' % Script)
+      exit(1)
+
+  print('\n============================================================================================================================')
+  print('%s: Release %s, %28s %46s' % (CmdDesc, Version, VersionDate, Now.strftime("%Y-%m-%d %H:%M")))
+  print('============================================================================================================================')
+  print('')
+  print('This script generates DDL for adding a new partitioned exchange table for the data load process')
+  print('')
+  print('Global Settings')
+  print('----------------')
+  print(' Configuration File             : %s' % ConfigFile)
+  print(' Create Script                  : %s' % Script)
+  print(' Log File                       : %s' % LogFile)
+  try:
+    print(' Oracle SID                     : %s' % environ['ORACLE_SID'])
+  except:
+    pass
+  try:
+    print(' Oracle Home                    : %s' % environ['ORACLE_HOME'])
+  except:
+    pass
+  if(ConnStr != ''):
+    print(' ConnectString                  : %s' % ConnStr)
+  print(' Period                         : %s' % Period)
+
+  print('\nTable Settings')
+  print('-----------------')
+  if (TabDict == {}):
+    MainRc += 1
+  else:
+    for Table in sorted(TabDict):
+      print(' Source Table                   : %s.%s' % (TabDict[Table]['SOURCE_OWNER'],TabDict[Table]['SOURCE_TABLE']))
+      print(' New Table                      : %s.%s' % (TabDict[Table]['OWNER'],Table))
+      print(' Table Storage                  : %s'    % TabDict[Table]['STORAGE'])
+      print(' Compress For                   : %s'    % TabDict[Table]['COMPRESS_FOR'])
+      print(' Partition Storage              : %s'    % TabDict[Table]['PARTITION_STORAGE'])
+      print(' Tablespace                     : %s'    % TabDict[Table]['TABLESPACE_NAME'])
+      print(' Logging                        : %s'    % TabDict[Table]['LOGGING'])
+      print('')
+
+  if (MainRc == 0):
+    if ((Silent == False) and (Execute == True)):
+      if(version_info[0] >= 3):
+        Response = input("\nContinue? y/N ")
+      else:
+        Response = raw_input("\nContinue? y/N ")
+      if(Response.upper() != 'Y'):
+        exit(0)
+
+    # Create a list of source tables...
+    for Table in TabDict:
+      SrcTableList.append(TabDict[Table]['SOURCE_OWNER'] + '.' + TabDict[Table]['SOURCE_TABLE'])
+
+    for Table in sorted(TabDict):
+      NewTable         = Table + '_' + Period
+      Owner            = TabDict[Table]['OWNER']
+      SrcOwner         = TabDict[Table]['SOURCE_OWNER']
+      SrcTable         = TabDict[Table]['SOURCE_TABLE']
+      Tablespace       = TabDict[Table]['TABLESPACE_NAME']
+      Storage          = TabDict[Table]['STORAGE']
+      PartStorage      = TabDict[Table]['PARTITION_STORAGE']
+      CompressFor      = TabDict[Table]['COMPRESS_FOR']
+      Logging          = TabDict[Table]['LOGGING']
+
+      print('Table: %s.%s' % (Owner, NewTable))
+
+      # Load up the Coresponding Source Table Definition from DBA_TAB_COLUMNS
+      # -----------------------------------------------------------------------
+      if (MainRc == 0):
+        (rc, ColDict) = GetColDef(SrcOwner, SrcTable)
+        MainRc += rc
+
+      # Load up the Coresponding Source Subpartition Definition from DBA_TAB_SUBPARTITIONS
+      # ------------------------------------------------------------------------------------
+      if (MainRc == 0):
+        (rc,SubpartDict) = GetSubpartDef(SrcOwner, SrcTable)
+        MainRc += rc
+
+      # Load up the partition key column from DBA_TAB_SUBPART_KEY_COLUMNS
+      # ------------------------------------------------------------------
+      if (MainRc == 0):
+        (rc,PartKey) = GetSubartKey(SrcOwner, SrcTable)
+        MainRc += rc
+
+      # Generate the DDL for the new partitioned partition exchange table.
+      # --------------------------------------------------------------------
+      if (MainRc == 0):
+        DDL = GenCreateTable(Owner, NewTable, ColDict, SubpartDict, PartKey)
+        CrTabList.append(DDL)
+
+      # Write the DDL to the script file...
+      # -------------------------------------
+      s.write('-----------------------------------------------------------------------------------------------------\n')
+      s.write('--- %s: Release %s, %28s %19s\n' % (CmdDesc, Version, VersionDate, Now.strftime("%Y-%m-%d %H:%M")))
+      s.write('-----------------------------------------------------------------------------------------------------\n')
+      s.write('--- Tables: %s' % '\n---         '.join(sorted(TabDict)) + '\n')
+      s.write('-----------------------------------------------------------------------------------------------------\n')
+      s.write('%s' % '\n\n'.join(CrTabList) + '\n')
+      s.write('-----------------------------------------------------------------------------------------------------\n')
+      s.close()
+
+    # Create New Tables / print DDL
+    # ----------------------------------
+    if (Execute == False):
+      print('\n---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---')
+      print('%s' % '\n\n'.join(CrTabList))
+      print('---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---')
+    else:
+      # Create The Table
+      # -----------------
+      for CreateTableDDL in CrTabList:
+        if (ConnStr != ''):
+          (rc, Stdout, ErrorList) = RunSqlplus(CreateTableDDL, True, ConnStr)
+        else:
+          (rc, Stdout, ErrorList) = RunSqlplus(CreateTableDDL, True)
+        
+        if(rc != 0):
+          MainRc += 1
+          print("\nError occured executing the following SQL:")
+          PrintError(CreateTableDDL, Stdout, ErrorList)
+
+  Now = datetime.now()
+  print('\n============================================================================================================================')
+  print('Process complete%108s' % Now.strftime("%Y-%m-%d %H:%M"))
+  print('============================================================================================================================')
+  exit(MainRc)
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------

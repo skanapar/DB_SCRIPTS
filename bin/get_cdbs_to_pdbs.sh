@@ -1,0 +1,2 @@
+run_sql_all_instances_local_node.sh get_cdb_pdbs.sql
+

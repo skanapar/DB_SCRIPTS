@@ -1,0 +1,140 @@
+#!/bin/env python
+
+from re import compile, search, match, findall, MULTILINE
+
+data = """Linux OSWbb v7.3.3 tmprorasapl01
+SNAP_INTERVAL 30
+CPU_COUNT 32
+OSWBB_ARCHIVE_DEST /u01/OSWATCHER/oswbb/archive
+zzz ***Wed Nov 28 13:00:13 CST 2018
+procs -----------memory---------- ---swap-- -----io---- --system-- -----cpu-----
+ r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
+18 25      0 76877840 353404 19741680    0    0  8891   787   13    5 13  4 69 15  0	
+23 24      0 76841024 353404 19742436    0    0 374305 119063 178744 155863 45 13 18 25  0	
+34 36      0 76813960 353404 19741592    0    0 383510 136384 175088 152686 45 11 19 25  0	
+zzz ***Wed Nov 28 13:00:43 CST 2018
+procs -----------memory---------- ---swap-- -----io---- --system-- -----cpu-----
+ r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
+20 10      0 76926992 353580 19742388    0    0  8892   789   15    6 13  4 69 15  0	
+17 10      0 76929872 353592 19743112    0    0 279327 64790 120338 108122 35  8 37 19  0	
+ 6 16      0 76933536 353596 19743100    0    0 333712 91246 142542 133356 39  8 36 17  0	
+zzz ***Wed Nov 28 13:01:13 CST 2018
+procs -----------memory---------- ---swap-- -----io---- --system-- -----cpu-----
+ r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
+15 18      0 76696296 353676 19742872    0    0  8892   789    1    8 13  4 69 15  0	
+ 8 18      0 76690784 353676 19743620    0    0 302065 47135 124964 114157 27  8 39 25  0	
+16 20      0 76688984 353680 19743320    0    0 302332 63920 118568 113109 23  6 49 22  0	
+Linux OSWbb v7.3.3 tmprorasapl01
+SNAP_INTERVAL 30
+CPU_COUNT 32
+OSWBB_ARCHIVE_DEST /u01/OSWATCHER/oswbb/archive
+zzz ***Wed Nov 28 13:00:13 CST 2018
+procs -----------memory---------- ---swap-- -----io---- --system-- -----cpu-----
+ r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
+18 25      0 76877840 353404 19741680    0    0  8891   787   13    5 13  4 69 15  0	
+23 24      0 76841024 353404 19742436    0    0 374305 119063 178744 155863 45 13 18 25  0	
+34 36      0 76813960 353404 19741592    0    0 383510 136384 175088 152686 45 11 19 25  0	
+zzz ***Wed Nov 28 13:00:43 CST 2018
+procs -----------memory---------- ---swap-- -----io---- --system-- -----cpu-----
+ r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
+20 10      0 76926992 353580 19742388    0    0  8892   789   15    6 13  4 69 15  0	
+17 10      0 76929872 353592 19743112    0    0 279327 64790 120338 108122 35  8 37 19  0	
+ 6 16      0 76933536 353596 19743100    0    0 333712 91246 142542 133356 39  8 36 17  0	
+zzz ***Wed Nov 28 13:01:13 CST 2018
+procs -----------memory---------- ---swap-- -----io---- --system-- -----cpu-----
+ r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
+15 18      0 76696296 353676 19742872    0    0  8892   789    1    8 13  4 69 15  0	
+ 8 18      0 76690784 353676 19743620    0    0 302065 47135 124964 114157 27  8 39 25  0	
+16 20      0 76688984 353680 19743320    0    0 302332 63920 118568 113109 23  6 49 22  0	
+Linux OSWbb v7.3.3 tmprorasapl01
+SNAP_INTERVAL 30
+CPU_COUNT 32
+OSWBB_ARCHIVE_DEST /u01/OSWATCHER/oswbb/archive
+zzz ***Wed Nov 28 13:00:13 CST 2018
+procs -----------memory---------- ---swap-- -----io---- --system-- -----cpu-----
+ r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
+18 25      0 76877840 353404 19741680    0    0  8891   787   13    5 13  4 69 15  0	
+23 24      0 76841024 353404 19742436    0    0 374305 119063 178744 155863 45 13 18 25  0	
+34 36      0 76813960 353404 19741592    0    0 383510 136384 175088 152686 45 11 19 25  0	
+zzz ***Wed Nov 28 13:00:43 CST 2018
+procs -----------memory---------- ---swap-- -----io---- --system-- -----cpu-----
+ r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
+20 10      0 76926992 353580 19742388    0    0  8892   789   15    6 13  4 69 15  0	
+17 10      0 76929872 353592 19743112    0    0 279327 64790 120338 108122 35  8 37 19  0	
+ 6 16      0 76933536 353596 19743100    0    0 333712 91246 142542 133356 39  8 36 17  0	
+zzz ***Wed Nov 28 13:01:13 CST 2018
+procs -----------memory---------- ---swap-- -----io---- --system-- -----cpu-----
+ r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
+15 18      0 76696296 353676 19742872    0    0  8892   789    1    8 13  4 69 15  0	
+ 8 18      0 76690784 353676 19743620    0    0 302065 47135 124964 114157 27  8 39 25  0	
+16 20      0 76688984 353680 19743320    0    0 302332 63920 118568 113109 23  6 49 22  0	
+Linux OSWbb v7.3.3 tmprorasapl01
+SNAP_INTERVAL 30
+CPU_COUNT 32
+OSWBB_ARCHIVE_DEST /u01/OSWATCHER/oswbb/archive
+zzz ***Wed Nov 28 13:00:13 CST 2018
+procs -----------memory---------- ---swap-- -----io---- --system-- -----cpu-----
+ r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
+18 25      0 76877840 353404 19741680    0    0  8891   787   13    5 13  4 69 15  0	
+23 24      0 76841024 353404 19742436    0    0 374305 119063 178744 155863 45 13 18 25  0	
+34 36      0 76813960 353404 19741592    0    0 383510 136384 175088 152686 45 11 19 25  0	
+zzz ***Wed Nov 28 13:00:43 CST 2018
+procs -----------memory---------- ---swap-- -----io---- --system-- -----cpu-----
+ r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
+20 10      0 76926992 353580 19742388    0    0  8892   789   15    6 13  4 69 15  0	
+17 10      0 76929872 353592 19743112    0    0 279327 64790 120338 108122 35  8 37 19  0	
+ 6 16      0 76933536 353596 19743100    0    0 333712 91246 142542 133356 39  8 36 17  0	
+zzz ***Wed Nov 28 13:01:13 CST 2018
+procs -----------memory---------- ---swap-- -----io---- --system-- -----cpu-----
+ r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
+15 18      0 76696296 353676 19742872    0    0  8892   789    1    8 13  4 69 15  0	
+ 8 18      0 76690784 353676 19743620    0    0 302065 47135 124964 114157 27  8 39 25  0	
+16 20      0 76688984 353680 19743320    0    0 302332 63920 118568 113109 23  6 49 22  0	
+Linux OSWbb v7.3.3 tmprorasapl01
+SNAP_INTERVAL 30
+CPU_COUNT 32
+OSWBB_ARCHIVE_DEST /u01/OSWATCHER/oswbb/archive
+zzz ***Wed Nov 28 13:00:13 CST 2018
+procs -----------memory---------- ---swap-- -----io---- --system-- -----cpu-----
+ r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
+18 25      0 76877840 353404 19741680    0    0  8891   787   13    5 13  4 69 15  0	
+23 24      0 76841024 353404 19742436    0    0 374305 119063 178744 155863 45 13 18 25  0	
+34 36      0 76813960 353404 19741592    0    0 383510 136384 175088 152686 45 11 19 25  0	
+zzz ***Wed Nov 28 13:00:43 CST 2018
+procs -----------memory---------- ---swap-- -----io---- --system-- -----cpu-----
+ r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
+20 10      0 76926992 353580 19742388    0    0  8892   789   15    6 13  4 69 15  0	
+17 10      0 76929872 353592 19743112    0    0 279327 64790 120338 108122 35  8 37 19  0	
+ 6 16      0 76933536 353596 19743100    0    0 333712 91246 142542 133356 39  8 36 17  0	
+zzz ***Wed Nov 28 13:01:13 CST 2018
+procs -----------memory---------- ---swap-- -----io---- --system-- -----cpu-----
+ r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
+15 18      0 76696296 353676 19742872    0    0  8892   789    1    8 13  4 69 15  0	
+ 8 18      0 76690784 353676 19743620    0    0 302065 47135 124964 114157 27  8 39 25  0	
+16 20      0 76688984 353680 19743320    0    0 302332 63920 118568 113109 23  6 49 22  0	
+"""
+
+found = None
+nl = '?:\n|\r\n?'
+pattern = compile(r'(^\S+) (\S+) (v[0-9].[0-9].[0-9]) (.*)('+nl+')(\S+) (\d+)('+nl+')(\S+) (\d+)('+nl+')(\S+) (\S+)', MULTILINE)
+pattern = compile(r'(^\S+) (\S+) (v[0-9].[0-9].[0-9]) (.*)('+nl+')(\S+) (\d+)('+nl+')(\S+) (\d+)('+nl+')(\S+) (\S+)', MULTILINE)
+#pattern = compile(r'(^\S+) (\S+) (v[0-9].[0-9].[0-9]) (.*)(?:\n|\r\n?)(\S+) (\d+)(?:\n|\r\n?)(\S+) (\d+)(?:\n|\r\n?)(\S+) (\S+)')
+#pattern = compile(r'(^zzz \*\*\*)(.*)(?:\n|\r\n?)(procs) (-+memory-+) (-+swap-+) (-+io-+) (-+system-+) (-+cpu-+)(?:\n|\r\n?) *(r) *(b) *(swap) *(free) *(buff) *(cache) *(si) *(so) *(bi) *(bo) *(in) *(cs) *(us) *(sy) *(id) *(wa) *(st)', MULTILINE)
+#pattern = compile(r'(^zzz \*\*\*)(.*)(?:\n|\r\n?)(procs) (-+memory-+) (-+swap-+) (-+io-+) (-+system-+) (-+cpu-+)(?:\n|\r\n?)\s+(r)\s+(b)\s+(s\S+)', MULTILINE)
+
+#print(data)
+#print(len(data))
+
+found = pattern.findall(data)
+
+if (found):
+  print(found)
+
+print('\n')
+
+found = pattern.finditer(data)
+for m in found:
+  print("-----")
+  print(m)
+  print("%02d-%02d: %s" % (m.start(), m.end(), m.group(0)))
+  print(data[m.start():m.end()])

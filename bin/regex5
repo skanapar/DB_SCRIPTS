@@ -1,0 +1,94 @@
+#!/bin/env python
+
+from re import compile, search, match, findall, MULTILINE
+from sys import exit
+
+filename = '/Users/randall.w.johnson/dba/bin/regex.dat'
+
+try:
+  f = open(filename)
+  data = f.read()
+  f.close()
+except:
+  print("Cannot open file for read: %s" % filename)
+  exit(1)
+
+found = None
+nl = '?:\n|\r\n?'
+#pattern = compile(r'(^\S+) (\S+) (v[0-9].[0-9].[0-9]) (.*)('+nl+')(\S+) (\d+)('+nl+')(\S+) (\d+)('+nl+')(\S+) (\S+)('+nl+')', MULTILINE)
+#pattern = compile(r'(^\S+) (\S+) (v[0-9].[0-9].[0-9]) (.*)('+nl+')(\S+) (\d+)('+nl+')(\S+) (\d+)('+nl+')(\S+) (\S+)('+nl+')', MULTILINE)
+pattern = compile(r'(^\S+ \S+ v[0-9].[0-9].[0-9] .*('+nl+')\S+ \d+('+nl+')\S+ \d+('+nl+')\S+ \S+('+nl+'))', MULTILINE)
+#pattern = compile(r'(^zzz \*\*\*)(.*)(?:\n|\r\n?)(procs) (-+memory-+) (-+swap-+) (-+io-+) (-+system-+) (-+cpu-+)(?:\n|\r\n?) *(r) *(b) *(swap) *(free) *(buff) *(cache) *(si) *(so) *(bi) *(bo) *(in) *(cs) *(us) *(sy) *(id) *(wa) *(st)', MULTILINE)
+#pattern = compile(r'(^zzz \*\*\*)(.*)(?:\n|\r\n?)(procs) (-+memory-+) (-+swap-+) (-+io-+) (-+system-+) (-+cpu-+)(?:\n|\r\n?)\s+(r)\s+(b)\s+(s\S+)', MULTILINE)
+
+#procs -----------memory---------- ---swap-- -----io---- --system-- -----cpu-----
+#r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st
+#pattern = compile(r'(procs -----------memory---------- ---swap-- -----io---- --system-- -----cpu-----\n r  b   swpd   free   buff  cache   si   so    bi    bo   in   cs us sy id wa st'+nl+')')
+#
+#head1 = r'(procs -+memory-+ -+swap-+ -+io-+ -+system-+ -+cpu-+\n)'
+#head2 = r'( +r +b +swpd +free +buff +cache +si +so +bi +bo +in +cs us +sy +id +wa +st\n)'
+#data1  = r'( +\d+ +\d+ +\d+ +\d+ +\d+ +\d+ +\d+ +\d+ +\d+ +\d+ +\d+ +\d+ +\d+ +\d+ +\d+ +\d+ +\d+\n)'
+#pattern = compile(head1 + head2 + data1 + data1 + data1)
+#
+#pattern = compile(head1)
+
+pattern = compile(r'(procs -+memory-+ -+swap-+ -+io-+ --system-- -----cpu-----\n)')
+
+#print('--- Sec 1 ---------------------')
+#found = pattern.findall(data)
+#
+#if (found):
+#  print(found)
+#
+#print('\n\n--- Sec 2 ---------------------')
+
+fiter = pattern.finditer(data)
+for m in fiter:
+  s = m.start()
+  e = m.end()
+  
+  #print(' Position: %d-%d' % (s,e))
+  print('     Span: %s' % repr(m.span()))
+  #print('    Start: %s' % s)
+  #print('      End: %s' % e)
+#  print('    Group: %s' % repr(m.group()))
+  print('   Groups: %s' % repr(m.groups()))
+#  print('GroupDict: %s' % m.groupdict())
+#  print('LastGroup: %s' % m.lastgroup)
+#  print('LastIndex: %s' % m.lastindex)
+  #print('      Pos: %s' % m.pos)
+  print('       Re: %s' % m.re)
+#  print('     Regs: %s' % repr(m.regs))
+#  print('   String: %s' % m.string)
+ # print('    Found: %s' % data[6:11])
+#  print('    Found: %s' % data[s:e])
+  print('---------')
+
+#print('\n\n--- Sec 3 ---------------------')
+#
+#found = pattern.search(data)
+#
+#if (found):
+#  s = found.start()
+#  e = found.end()
+#  
+#  print('')
+#  print(' Position: %d-%d' % (s,e))
+#  print('   Groups: %s' % str(found.groups()))
+#  print('     Span: %s' % repr(found.span()))
+#  print('    Start: %s' % s)
+#  print('      End: %s' % e)
+#  print('     Data: %s' % data[s:e])
+#
+#exit()
+#print('\n\n--- Sec 4 ---------------------')
+#
+#found = pattern.split(data)
+#
+#if (found):
+#  print(found[0])
+#  print(found[1])
+#  print(found[2])
+#  print(found[3])
+#  print(found[4])
+#

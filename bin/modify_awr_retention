@@ -1,0 +1,24 @@
+#!/bin/bash
+
+ps -ef | grep pmon | grep -v grep | grep -v perl | grep -v ASM |\
+while read PMON; do
+   INST=`echo "$PMON" | awk {' print $8 '} | cut -f3 -d_`
+  echo "instance: $INST"
+
+  export ORACLE_SID=$INST
+  export ORAENV_ASK=NO
+  . oraenv
+
+  sqlplus -s /nolog <<-EOF
+  connect / as sysdba
+
+set lines 300
+set heading off
+
+execute dbms_workload_repository.modify_snapshot_settings (interval => 60, retention => 259200);
+
+EOF
+echo '-----'
+echo
+echo
+done

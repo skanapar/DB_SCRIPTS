@@ -1,0 +1,237 @@
+#!/bin/env python
+
+##################################################################################################
+#  Name:        gen_fk_cleanup                                                                   #
+#  Author:      Randy Johnson                                                                    #
+#  Description: This script generates the DML to delete orphaned rows from child tables.         #
+#               Key assumtion is that the child table has a single column primary key.           #
+#  Result Code: 0 indicates successful completion.                                               #
+#                                                                                                #
+#                                                                                                #
+# History:                                                                                       #
+#                                                                                                #
+# Chg Date   Chg  By               Change Description                                            #
+# ---------- ---- ---------------- ------------------------------------------------------------  #
+# 04/02/2013 1.0  Randy Johhnson   Initial release.                                              #
+##################################################################################################
+
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+from datetime   import datetime
+from optparse   import OptionParser
+from os         import environ
+from os         import listdir
+from os         import path
+from os.path    import basename
+from socket     import gethostname
+from sys        import argv
+from sys        import exc_info
+from sys        import exit
+from sys        import stdout
+from Oracle     import RunSqlplus
+from Oracle     import PrintError
+from Oracle     import LoadOratab
+from Oracle     import SetOracleEnv
+from Oracle     import GetPassword
+
+
+# --------------------------------------
+# ---- Function Definitions ------------
+# --------------------------------------
+
+# Def  : GenFixDDL()
+# Desc : Generates the SQL statements to purge orphan records.
+# Args : Database name (for tns connect), Username, Password, Exemption list.
+# Retn : ConstraintInfo
+#---------------------------------------------------------------------------
+def GenFixDDL(DbName, AuthUser, AuthPasswd, Owner, ConstName):
+
+  FkSql  = "select cons.owner             ||'~'||"                + '\n'
+  FkSql += "       cons.table_name        ||'~'||"                + '\n'
+  FkSql += "       cons.constraint_name   ||'~'||"                + '\n'
+  FkSql += "       cons.constraint_type   ||'~'||"                + '\n'
+  FkSql += "       cons.r_owner           ||'~'||"                + '\n'
+  FkSql += "       cons.r_constraint_name ||'~'||"                + '\n'
+  FkSql += "       cols.column_name       ||'~'||"                + '\n'
+  FkSql += "       cols.position          || '!EOL!'"             + '\n'
+  FkSql += "   FROM dba_constraints cons,"                        + '\n'
+  FkSql += "        dba_cons_columns cols"                        + '\n'
+  FkSql += "  WHERE cons.owner = cols.owner"                      + '\n'
+  FkSql += "    AND cons.constraint_name = cols.constraint_name"  + '\n'
+  FkSql += "    AND cons.constraint_type = 'R'"                   + '\n'
+  FkSql += "    AND cons.constraint_name = '" + ConstName + "';"  + '\n'
+
+  (rc,Stdout,ErrorList) = RunSqlplus(FkSql, AuthUser + '/' + AuthPasswd + '@' + DbName)
+
+  if (rc != 0):
+    PrintError(FkSql, Stdout, ErrorList)
+    exit(rc)
+
+  # I expect 0 or 1 row to be returned. (0 means the constraint was not found)
+  if (Stdout == ''):
+    print("Foreign key not found.")
+    exit(1)
+  else:
+    Stdout = Stdout.replace('!EOL!', '')
+    (FK_OWNER, FK_TABLE_NAME, FK_CONSTRAINT_NAME, FK_CONSTRAINT_TYPE, FK_R_OWNER, FK_R_CONSTRAINT_NAME, FK_COLUMN_NAME, FK_POSITION) = Stdout.split('~')
+
+  PkSql  = "select cons.owner ||'~'|| cons.table_name ||'~'|| cons.constraint_name   ||'~'||" + '\n'
+  PkSql += "       cols.column_name ||'~'|| cols.position ||'!EOL!'"                          + '\n'
+  PkSql += "   FROM dba_constraints cons,"                                                    + '\n'
+  PkSql += "        dba_cons_columns cols"                                                    + '\n'
+  PkSql += "  WHERE cons.owner = cols.owner"                                                  + '\n'
+  PkSql += "    AND cons.constraint_name = cols.constraint_name"                              + '\n'
+  PkSql += "    AND cons.constraint_type = 'P'"                                               + '\n'
+  PkSql += "    AND cols.table_name = '" + FK_TABLE_NAME + "';"                               + '\n'
+
+  (rc,Stdout,ErrorList) = RunSqlplus(PkSql, AuthUser + '/' + AuthPasswd + '@' + DbName)
+
+  if (rc != 0):
+    PrintError(PkSql, Stdout, ErrorList)
+    exit(rc)
+
+  # I expect 0, 1, or more rows to be returned. (0 means the constraint was not found)
+  if (Stdout == ''):
+    print("Primary key not found.")
+    exit(1)
+  else:
+    for row in (Stdout.split('!EOL!')):
+      if (row != ''):
+        (PK_OWNER,PK_TABLE_NAME,PK_CONSTRAINT_NAME,PK_COLUMN_NAME,PK_POSITION) = row.split('~')
+
+  ParentKeySql  = "select cons.owner ||'~'|| cons.table_name ||'~'|| cons.constraint_name   ||'~'||" + '\n'
+  ParentKeySql += "       cols.column_name ||'~'|| cols.position ||'!EOL!'"                          + '\n'
+  ParentKeySql += "   FROM dba_constraints cons,"                                                    + '\n'
+  ParentKeySql += "        dba_cons_columns cols"                                                    + '\n'
+  ParentKeySql += "  WHERE cons.owner = cols.owner"                                                  + '\n'
+  ParentKeySql += "    AND cons.constraint_name = cols.constraint_name"                              + '\n'
+  ParentKeySql += "    AND cols.constraint_name = '" + FK_R_CONSTRAINT_NAME + "'"                    + '\n'
+  ParentKeySql += "    AND cols.owner = '" + FK_R_OWNER + "';"                                       + '\n'
+
+  (rc,Stdout,ErrorList) = RunSqlplus(ParentKeySql, AuthUser + '/' + AuthPasswd + '@' + DbName)
+
+  if (rc != 0):
+    PrintError(ParentKeySql, Stdout, ErrorList)
+    exit(rc)
+
+  # I expect 0, 1, or more rows to be returned. (0 means the constraint was not found)
+  if (Stdout == ''):
+    print("Constraint not found.")
+    exit(1)
+  else:
+    for row in (Stdout.split('!EOL!')):
+      if (row != ''):
+        (PARENT_KEY_OWNER,PARENT_KEY_TABLE_NAME,PARENT_KEY_CONSTRAINT_NAME,PARENT_KEY_COLUMN_NAME,PARENT_KEY_POSITION) = row.split('~')
+
+  print()
+  print("-------------------------------------------------------------------------------")
+  print("-- The following query counts the orphan rows to be deleted.                 --")
+  print("-------------------------------------------------------------------------------")
+  print("select COUNT(*)")
+  print(" from " + FK_OWNER + "." + FK_TABLE_NAME + " x,")
+  print("      " + PARENT_KEY_OWNER + "." + PARENT_KEY_TABLE_NAME   + " y")
+  print("where x." + FK_COLUMN_NAME + " = y." + PARENT_KEY_COLUMN_NAME + "(+)")
+  print("  and y." + PARENT_KEY_COLUMN_NAME + " is null;")
+  print()
+  print("-------------------------------------------------------------------------------")
+  print("-- The following DML deletes orphan rows from %-30s %2s" % (FK_TABLE_NAME, '--'))
+  print("-------------------------------------------------------------------------------")
+  print("delete from " + FK_OWNER + '.' + FK_TABLE_NAME + " where " + PK_COLUMN_NAME + " in (")
+  print("   select x." + PK_COLUMN_NAME)
+  print("     from " + FK_OWNER + "." + FK_TABLE_NAME + " x,")
+  print("          " + PARENT_KEY_OWNER + "." + PARENT_KEY_TABLE_NAME   + " y")
+  print("    where x." + FK_COLUMN_NAME + " = y." + PARENT_KEY_COLUMN_NAME + "(+)")
+  print("      and y." + PARENT_KEY_COLUMN_NAME + " is null);")
+  print("      commit;")
+  print("-------------------------------------------------------------------------------")
+  print("-- The following DML attempts to enable validate the constraint               ")
+  print("-------------------------------------------------------------------------------")
+  print("ALTER TABLE " + FK_OWNER + "." + FK_TABLE_NAME + " ENABLE VALIDATE CONSTRAINT " + ConstName + ";")
+
+
+  return()
+# End GenFixDDL()
+
+
+# --------------------------------------
+# ---- End Function Definitions --------
+# --------------------------------------
+
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  Interactive    = stdout.isatty()
+  Cmd            = basename(argv[0])
+  HomeDir        = path.split(argv[0])[0]
+  CmdPrefix      = Cmd.split('.')[0]
+  CmdDesc        = 'GenDelSql'
+  Version        = '1.00'
+  OratabFile     = '/etc/oratab'
+  PasswdFilename = '/home/oracle/dba/etc/.passwd';
+  HostName       = gethostname()
+  ExemptUsers    = []
+  Banner         = 'Session Sniper, Release ' + Version + ' Production, Tue Apr 2 13:50:35 CDT 2013'
+
+  # Process command line options
+  # ----------------------------------
+  parser = OptionParser()
+  parser.add_option("-d",                             dest="DbName",  default='',    type=str, help="Database name",               metavar='DbName')
+  parser.add_option("-u",                             dest="User",    default='',    type=str, help="Authentication user account", metavar='AuthUser')
+  parser.add_option("-o",                             dest="Owner",   default='',    type=str, help="FK Constraint owner",         metavar='Owner')
+  parser.add_option("-c",                             dest="Fk",      default='',    type=str, help="FK constraint",               metavar='Fk')
+  parser.add_option("-v",        action="store_true", dest="Verbose", default=False,           help="Verbose output",              metavar='Verbose')
+  parser.add_option("--version", action="store_true", dest="Version", default=False,           help="print version info.",         metavar='Version')
+
+  Option, Args = parser.parse_args()
+  Argc = len(Args)
+
+  DbName    = Option.DbName
+  AuthUser  = Option.User
+  Owner     = Option.Owner
+  ConstName = Option.Fk
+  Verbose   = Option.Verbose
+  Version   = Option.Version
+
+  # Setup the Oracle environment and setup Oracle commands.
+  # --------------------------------------------------------
+  Oratab = LoadOratab()
+
+  if ('ORACLE_SID' in list(environ.keys())):
+    Sid = environ['ORACLE_SID']
+  else:
+    Sid = ''
+
+  (OracleSid, OracleHome) = SetOracleEnv(Sid, Oratab)
+  #Sqlplus  = OracleHome + '/bin/sqlplus'
+  #
+  #if (DbName == ''):
+  #  DbName = environ['ORACLE_SID']
+  #
+  ## Load error information used for error message lookup if a
+  ## Sqlplus, lsnrctl, etc. error occurs.
+  ## -------------------------------------------------------------
+  #FacilitiesFile = OracleHome + '/lib/facility.lis'
+  #FacilitiesDD = LoadFacilities(FacilitiesFile)
+
+  AuthPasswd = GetPassword(DbName, AuthUser, True)
+
+  if (AuthPasswd != ''):
+    GenFixDDL(DbName, AuthUser, AuthPasswd, Owner, ConstName)
+  else:
+    print('Password lookup failed.')
+    exit(1)
+
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------
+
+
+
+# --------------------------------------
+# ---- Program Notes -------------------
+# --------------------------------------
+

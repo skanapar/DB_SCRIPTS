@@ -1,0 +1,11 @@
+SET SERVEROUTPUT ON
+DECLARE
+  l_plans_packed  PLS_INTEGER;
+BEGIN
+  l_plans_packed := DBMS_SPM.pack_stgtab_baseline(
+    table_name      => 'spm_stageing_tab',
+    table_owner     => 'TEST');
+
+  DBMS_OUTPUT.put_line('Plans Packed: ' || l_plans_packed);
+END;
+/

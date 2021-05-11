@@ -1,0 +1,2 @@
+connect catalog rco/@catalog
+register database;

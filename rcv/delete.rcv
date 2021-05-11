@@ -1,0 +1,3 @@
+connect catalog rco@catalog
+CONFIGURE CHANNEL DEVICE TYPE DISK  clear;
+delete noprompt obsolete;

@@ -1,0 +1,168 @@
+#!/bin/env python
+
+##################################################################################################
+#  Name:        index_usage_by_execution                                                         #
+#  Author:      Randy Johnson                                                                    #
+#  Description: Shows index usage by execution (find problematic indexes).                       #
+#               From Damir Vadas's script: index_usage_by_execution.sql.                         #
+#                                                                                                #
+# History:                                                                                       #
+#                                                                                                #
+# Date       Ver. Who              Change Description                                            #
+# ---------- ---- ---------------- ------------------------------------------------------------- #
+# 09/06/2015 1.00 Randy Johnson    Initial write.                                                #
+# 07/13/2017 1.01 Randy Johnson    Added program description to Usage.                           #
+##################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+from datetime     import datetime
+from optparse     import OptionParser
+from os           import environ
+from os.path      import basename
+from signal       import SIG_DFL
+from signal       import SIGPIPE
+from signal       import signal
+from sys          import argv
+from sys          import exit
+from sys          import version_info
+from Oracle       import ParseConnectString
+from Oracle       import RunSqlplus
+from Oracle       import SetOracleEnv
+from Oracle       import ValidateDate
+
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  Cmd            = basename(argv[0]).split('.')[0]
+  CmdDesc        = 'Index Usage by Execution'
+  Version        = '1.01'
+  VersionDate    = 'Thu Jul 13 12:15:38 CDT 2017'
+  DevState       = 'Production'
+  Banner         = CmdDesc + ': Release ' + Version + ' '  + DevState + '. Last updated: ' + VersionDate
+  Sql            = ''
+  SqlHeader      = '/***** ' + CmdDesc.upper() + ' *****/'
+  ErrChk         = False
+  InStr          = ''
+  TnsName        = ''
+  Username       = ''
+  Password       = ''
+  ConnStr        = ''
+
+  # For handling termination in stdout pipe; ex: when you run: oerrdump | head
+  signal(SIGPIPE, SIG_DFL)
+
+  Usage  = '\n\n-------------------------------------------------------------------------------'
+  Usage += '\nShows index usage by execution (find problematic indexes). From Damir Vadas\'s'
+  Usage += '\nscript: index_usage_by_execution.sql.'  
+  ArgParser = OptionParser(Usage)
+
+  ArgParser.add_option('-m',  dest='MinMB',                           default=2,     type=int, help="minimum size (MB)")
+  ArgParser.add_option('-o',  dest='Owner',                           default='',    type=str, help="where username in ('user1','user2','user3', ...)")
+  ArgParser.add_option('--s', dest='Show',       action='store_true', default=False,           help="print SQL query.")
+  ArgParser.add_option('--v', dest='ShowVer',    action='store_true', default=False,           help="print version info.")
+
+  # Parse command line arguments
+  Options, args = ArgParser.parse_args()
+
+  MinMB     = str(Options.MinMB)
+  Owner     = Options.Owner.upper()
+  Show      = Options.Show
+  ShowVer   = Options.ShowVer
+
+  if (ShowVer == True):
+    print('\n%s' % Banner)
+    exit()
+
+  Sql += "column owner noprint\n"
+  Sql += "column table_name      format a30        heading 'Table Name'\n"
+  Sql += "column index_name      format a30        heading 'Index Name'\n"
+  Sql += "column index_type      format a30        heading 'Index Type'\n"
+  Sql += "column index_operation format a40        heading 'Index Operation'\n"
+  Sql += "column nr_exec         format 9G999G990  heading 'Executions'\n"
+  Sql += "column mb              format 999G990D90 heading 'Index Size MB' justify right\n"
+  Sql += "\n"
+  Sql += "WITH Q AS\n"
+  Sql += "   ( SELECT s.owner                 a_owner\n"
+  Sql += "           , table_name             a_table_name\n"
+  Sql += "           , index_name             a_index_name\n"
+  Sql += "           , index_type             a_index_type\n"
+  Sql += "           , SUM(s.bytes) / 1048576 a_mb\n"
+  Sql += "        FROM dba_segments s\n"
+  Sql += "           , dba_indexes  i\n"
+  Sql += "       WHERE index_name     = segment_name\n"
+  if (Owner != ''):
+    Sql += "         AND UPPER(s.owner) =  '" + Owner.upper() + "'\n"
+    Sql += "         AND UPPER(i.owner) =  '" + Owner.upper() + "'\n"
+  Sql += "    GROUP BY s.owner\n"
+  Sql += "           , table_name\n"
+  Sql += "           , index_name\n"
+  Sql += "           , index_type\n"
+  Sql += "      HAVING SUM(s.bytes) > 1048576 * " + MinMB + "\n"
+  Sql += "   )\n"
+  Sql += "   SELECT /*+ NO_QUERY_TRANSFORMATION(S) */\n"
+  Sql += "          a_owner                                    owner\n"
+  Sql += "        , a_table_name                               table_name\n"
+  Sql += "        , a_index_name                               index_name\n"
+  Sql += "        , a_index_type                               index_type\n"
+  Sql += "        , a_mb                                       mb\n"
+  Sql += "        , DECODE (options, null, '-',OPTIONS) index_operation\n"
+  Sql += "        , COUNT(operation)                           nr_exec\n"
+  Sql += "     FROM q\n"
+  Sql += "        , dba_hist_sql_plan d\n"
+  Sql += "    WHERE d.object_owner(+) = q.a_owner\n"
+  Sql += "      AND d.object_name(+)  = q.a_index_name\n"
+  Sql += " GROUP BY a_owner\n"
+  Sql += "        , a_table_name\n"
+  Sql += "        , a_index_name\n"
+  Sql += "        , a_index_type\n"
+  Sql += "        , a_mb\n"
+  Sql += "        , DECODE (options, null, '-',options)\n"
+  Sql += " ORDER BY a_owner\n"
+  Sql += "        , a_table_name\n"
+  Sql += "        , a_index_name\n"
+  Sql += "        , a_index_type\n"
+  Sql += "        , a_mb desc\n"
+  Sql += "        , nr_exec DESC;"
+
+  Sql = Sql.strip()
+
+  if(Show):
+    print('-----------cut-----------cut-----------cut-----------cut-----------cut-----------')
+    print(Sql)
+    print('-----------cut-----------cut-----------cut-----------cut-----------cut-----------')
+    exit()
+
+  # Check/setup the Oracle environment
+  if (not('ORACLE_SID' in list(environ.keys()))):
+    print('ORACLE_SID is required.')
+    exit(1)
+  else:
+    # Set the ORACLE_HOME just in case it isn't set already.
+    if (not('ORACLE_HOME' in list(environ.keys()))):
+      (OracleSid, OracleHome) = SetOracleEnv(environ['ORACLE_SID'])
+
+  # Parse the connect string if any, prompt for username, password if needed.
+  if (len(args) > 0 and Show == False):
+    InStr = args[0]
+    ConnStr = ParseConnectString(InStr)
+
+  # Execute the report
+  if (ConnStr != ''):
+    (Stdout) = RunSqlplus(Sql, ErrChk, ConnStr)
+  else:
+    (Stdout) = RunSqlplus(Sql, ErrChk)
+  
+  Stdout = Stdout.strip()
+  
+  # Print the report
+  if (Stdout != ''):
+      print('\n%s' % Stdout)
+
+  exit(0)
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------

@@ -1,0 +1,12 @@
+#!/bin/bash
+
+printf "%6s %-20s %-80s\n" "PID" "NAME" "ORACLE_HOME"
+pgrep -lf _pmon_ |
+while read pid pname y; do
+  if [ `uname` = "SunOS" ]; then
+    printf "%6s %-20s %-70s\n" $pid $pname `pfiles $pid | grep dbs | sed .s/dbs.*//. | uniq`
+  else
+    printf "%6s %-20s %-80s\n" $pid $pname `ls -l /proc/$pid/exe | awk -F.>. .{ print $2 }. | sed .s/bin\/oracle$//. | sort | uniq`
+  fi
+done
+

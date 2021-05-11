@@ -1,0 +1,13 @@
+#!/bin/bash
+
+crsstat \\.svc | grep `hostname | cut -f1 -d.` | cut -f2,3 -d. |\
+while read SERVICE; do
+   DB=`echo  "$SERVICE" | cut -f1 -d.`
+   SVC=`echo "$SERVICE" | cut -f2 -d.`
+   INST=`ps -ef | grep pmon | grep -v grep | grep $DB | awk {' print $8 '} | cut -f3 -d_`
+   crsstat \\.svc | grep $SERVICE |\
+   while read SVC_INFO; do
+     printf "$DB\t$INST\t$SVC_INFO\n"
+   done
+done
+

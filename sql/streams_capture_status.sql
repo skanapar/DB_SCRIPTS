@@ -1,0 +1,22 @@
+prompt Display general information about each capture process
+prompt -------------------------------------------------------
+
+COLUMN CAPTURE_NAME HEADING 'Capture|Name' FORMAT A20
+COLUMN PROCESS_NAME HEADING 'Capture|Process|Number' FORMAT A7
+COLUMN SID HEADING 'Session|ID' FORMAT 9999
+COLUMN SERIAL# HEADING 'Session|Serial|Number' FORMAT 999999
+COLUMN STATE HEADING 'State' FORMAT A27
+COLUMN TOTAL_MESSAGES_CAPTURED HEADING 'Redo|Entries|Scanned' FORMAT 9999999999
+COLUMN TOTAL_MESSAGES_ENQUEUED HEADING 'Total|LCRs|Enqueued' FORMAT 999999999
+
+SELECT c.CAPTURE_NAME,
+       SUBSTR(s.PROGRAM,INSTR(S.PROGRAM,'(')+1,4) PROCESS_NAME, 
+       c.SID,
+       c.SERIAL#, 
+       c.STATE,
+       c.TOTAL_MESSAGES_CAPTURED,
+       c.TOTAL_MESSAGES_ENQUEUED 
+  FROM V$STREAMS_CAPTURE c, V$SESSION s
+  WHERE c.SID = s.SID AND
+        c.SERIAL# = s.SERIAL#;
+

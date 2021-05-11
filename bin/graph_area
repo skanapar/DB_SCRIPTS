@@ -1,0 +1,19 @@
+#!/bin/env python
+
+# library
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+ 
+# Data
+x=range(1,6)
+x=['a','b','c','d','e', 'f']
+
+y=[ [45, 45, 35, 39, 27, 23], [13, 11, 8, 8, 8, 6], [18, 19, 37, 36, 39, 49], [25, 25, 19, 17, 25, 22], [0, 0, 0, 0, 0, 0]]
+ 
+# Plot
+plt.style.use('seaborn-paper')
+plt.stackplot(x,y, labels=['A','B','C','D','E', 'F'])
+plt.legend(loc='upper left')
+plt.show()
+

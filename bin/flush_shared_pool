@@ -1,0 +1,27 @@
+#!/bin/bash
+
+if [ "$#" -ne 1 ]; then
+  echo "You must provide a database instance as the first parameter."
+  exit 1
+fi
+
+INSTANCE=$1
+
+# Setup the environment
+
+MAIN_ENV=~/.env/main.env
+if [ -r $MAIN_ENV ]; then
+   . $MAIN_ENV $INSTANCE
+else
+   echo 'Could not open $MAIN_ENV for read.'
+fi
+
+sqlplus -s /nolog <<-EOF
+connect / as sysdba
+set head off
+select 'Connected to: '|| INSTANCE_NAME from v\$instance;
+
+prompt Flush Shared Pool
+alter system flush shared_pool;
+
+EOF

@@ -1,0 +1,50 @@
+#!/bin/bash
+
+PARM=$1
+
+
+ps -ef | grep pmon | grep -v grep | grep -v perl | grep -v ASM | grep -v DBFS |\
+while read PMON; do
+  INST=`echo "$PMON" | awk {' print $8 '} | cut -f3 -d_`
+
+  MAIN_ENV=~/.env/main.env
+  if [ -r $MAIN_ENV ]; then
+     . $MAIN_ENV $INST
+  else
+     echo 'Could not open $MAIN_ENV for read.'
+  fi
+
+  echo "instance: $INST"
+
+  sqlplus -s /nolog <<-EOF
+  connect / as sysdba
+
+  set lines 200
+  set pages 1000
+  col name       format a50
+  col value      format a70
+  col isdefault  format a8
+  col ismodified format a10
+  col isset      format a10
+
+  select '$INST', name, value, isdefault, ismodified, isset
+    from ( select flag,name,value,isdefault,ismodified,
+                  case when isdefault||ismodified = 'TRUEFALSE' 
+                       then 'FALSE' else 'TRUE' 
+                        end isset
+             from ( select decode(substr(i.ksppinm,1,1),'_',2,1) flag,
+                           i.ksppinm name,
+                           sv.ksppstvl value,
+                           sv.ksppstdf  isdefault,
+                           decode(bitand(sv.ksppstvf,7),1,'TRUE',4,'TRUE','FALSE') ismodified
+                      from sys.x\$ksppi  i,
+                           sys.x\$ksppsv sv
+                     where i.indx = sv.indx 
+                  )
+         )
+   where name like nvl('%$PARM%',name)
+   order by flag,replace(name,'_','');
+EOF
+
+done
+

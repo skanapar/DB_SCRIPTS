@@ -1,0 +1,105 @@
+#!/usr/bin/perl
+
+# Import Modules/Functions
+#--------------------------#
+use File::Basename;
+use File::Path;
+use Getopt::Long;
+use Sys::Hostname;
+use FindBin;
+use lib "$FindBin::Bin";
+
+# -------------------------------------------#
+#  Main Program                              #
+# -------------------------------------------#
+$Basename          = basename($0);
+$Version           = '1.0';
+$HostName          = hostname();
+$MainRC            = 0;
+$DbConnStr         = '/ as sysdba';
+$TargetConnStr     = 'target /';
+$CatalogConnStr    = 'rman/r0cketMan@rmltr01';
+$ArgCount          = @ARGV;
+($CmdName,$cmdExt) = split('\.', $Basename);
+$Pid               = $$;
+$CRSSTAT           = '/u01/app/11.2.0/grid/bin/crs_stat';
+
+# Command line options
+# --------------------------------
+$OptOutput = GetOptions (
+  'sid:s'          => \$OracleSid,
+  'check'          => \$Checkconfig,
+  'configure'      => \$Configure,
+  'unconfigure'    => \$Unconfigure,
+  'register'       => \$Register,
+  'unregister'     => \$Unregister,
+  'verifycatalog'  => \$VerifyCatalog,
+  'help'           => \$Help,
+  'trace'          => \$Trace,
+  'version'        => \$ShowVersion
+);
+
+if ($OptOutput != 1) {
+  PrintUsage();
+  exit 1;
+}
+
+if ($Help) {
+  PrintUsage();
+  exit 0;
+}
+
+my $CrsCtlStatOut = RunCrsStat($Name);
+@AllResources = split(/\n\n/, $CrsCtlStatOut);
+
+foreach $Line ($AllResources[5]) {
+  next if $Line =~ /^\s*$/;  # skip blank lines
+  print "$Line\n";
+}
+
+
+
+
+
+
+
+# Sub : RunCrsStat($)
+# Desc:
+# Args: $0 is the name of the resource
+# Retn:
+#---------------------------------------------------------------------------
+sub RunCrsStat($) {
+   my $Name = shift;
+
+   my $Out = `$CRSSTAT -v`;
+   return $Out;
+}
+
+# Function: PrintUsage()
+# Print Usage
+# ------------------------------------------------
+sub PrintUsage() {
+   print "\nUsage: $basename [-s(id) ORACLE_SID] [-co(nfigure) -ch(eck) -u(nconfigure -r(egister) -unr(egister) -veri(fycatalog) -h(elp) -vers(ion)]\n";
+   print "Where: -s(id)           = ORACLE_SID\n";
+   print "       -co(onfigure)    = Configure the user account for CommVault.\n";
+   print "       -ch(eck)         = Verify the current configuration.\n";
+   print "       -unc(onfigure)   = Drops the CVBK user account (cascade).\n";
+   print "       -r(egister)      = Registers the database with the recovery catalog.\n";
+   print "       -unr(egister)    = Removes the database from the recovery catalog.\n";
+   print "       -veri(fycatalog) = Verifies the registration status of the database in the recovery catalog.\n";
+   print "       -vers(ion)       = Prints version information.\n";
+   print "       -h(elp)          = Prints this message.\n\n";
+   print "Examples:\n";
+   print "       $CmdName\n";
+   print "       $CmdName -configure -register\n";
+   print "       $CmdName -s mydb -unconfigure\n";
+   print "       $CmdName -s mydb -unregister\n";
+   print "       $CmdName -s mydb -unconfigure -unregister\n";
+   print "       $CmdName -s mydb -check\n";
+   print "       $CmdName -s mydb -verify\n";
+   print "       $CmdName -s -check -verify\n";
+   print "       $CmdName -h\n";
+   print "       $CmdName -vers\n";
+   exit 0;
+}
+

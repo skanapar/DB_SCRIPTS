@@ -1,0 +1,223 @@
+#!/bin/env python
+
+import re
+from pprint import PrettyPrinter
+
+pp = PrettyPrinter(indent=4,width=200)
+
+# ----------------------------------------
+# Notes:
+#  Meta Characters (need to be escaped)
+#  . ^ $ + ? { } [ ] \ | ( )
+#
+# Re.finditer Methods:
+#   f.group()
+#   f.start()
+#   f.end()
+#   f.span()
+#   f.
+# ----------------------------------------
+
+
+#--------------------------- Example #1 ------------------------------------------------------
+
+print('\n------------------ Example #1 ---------------------------')
+
+name_age = 'Janice is 22 and Theon is 33\nGabriel is 44 and Joey is 21\n'
+
+ages  = re.findall(r'\d{1,3}',     name_age)
+names = re.findall(r'[A-Z][a-z]*', name_age)
+
+age_dict = {}
+x = 0
+
+print("\n%s" % names)
+print("%s\n" % ages)
+
+for each_name in names:
+    age_dict[each_name] = ages[x]
+    x += 1
+
+pp.pprint(age_dict)
+
+#--------------------------- Example #2 ------------------------------------------------------
+
+print('\n\n------------------ Example #2 ---------------------------')
+
+mystr = "sat, hat, mat, pat"
+
+allstr = re.findall(r"[h-m]at", mystr)
+
+print("\n%s" % mystr)
+
+print("\n%s" % allstr)
+
+
+#--------------------------- Example #3 ------------------------------------------------------
+
+print('\n\n------------------ Example #3 ---------------------------')
+
+mystr = "sat, hat, mat, pat"
+
+allstr = re.findall(r"[^h-m]at", mystr)
+
+print("\n%s" % mystr)
+
+print("\n%s" % allstr)
+
+#--------------------------- Example #4 ------------------------------------------------------
+
+print('\n\n------------------ Example #4 ---------------------------')
+
+mystr = "hat, rat, mat, pat"
+
+regex = re.compile(r"[r]at")
+
+print("\n%s" % mystr)
+
+mystr = regex.sub("food", mystr)
+
+print("\n%s" % mystr)
+
+#--------------------------- Example #5 ------------------------------------------------------
+
+print('\n\n------------------ Example #5 ---------------------------')
+
+mystr = "12345"
+
+x = re.findall(r"\d{5}", mystr)
+print("\n%s" % mystr)
+print("\nFound: %s" % x)
+
+#--------------------------- Example #6 ------------------------------------------------------
+
+print('\n\n------------------ Example #6 ---------------------------')
+
+mystr = "123 1234 12345 123456 1234567"
+
+x = re.findall(r"\d{5,7}", mystr)
+print("\n%s" % mystr)
+print("\nFound: %s" % x)
+
+#--------------------------- Example #7 ------------------------------------------------------
+
+print('\n\n------------------ Example #7 ---------------------------')
+
+# \w [a-zA-Z0-9_]
+# \W [^a-zA-Z0-9]
+# \d [0-9]
+# \D [^0-9]
+# \s [\f\n\r\t\v]
+# \S [^\f\n\r\t\v]
+
+phone = "817-564-6583)"
+
+if re.search(r'\d{3}-\d{3}-\d{4}', phone) :
+  print("\nThis is a valid phone number: %s" % phone)
+else:
+  print("\nThis is not a valid phone number: %s" % phone)
+
+#--------------------------- Example #8 ------------------------------------------------------
+
+print('\n\n------------------ Example #8 ---------------------------\n')
+
+names = 'Randy Johnson\nLisa Johnson\nBrandon Johnson\nMurphy Johnson'
+
+found = re.search(r'(\w+\s\w+\n)', names)
+
+if found:
+  print("Names found: %s" % found.groups())
+
+fiter = re.finditer(r'(\w+)\s(\w+)\n', names)
+
+for f in fiter:
+  print("Found starting at : %s" % f.start())
+  print("Found ending at   : %s" % f.end())
+  print("Found Groups      : %s" % repr(f.groups()))
+
+#--------------------------- Example #9 ------------------------------------------------------
+
+print('\n\n------------------ Example #9 ---------------------------')
+
+names = '''
+***12345678
+87654321
+817-564-6583
+Randy Johnson
+
+***12345678
+87654321
+585.747.8822
+Lisa Johnson
+
+
+***12345678
+87654321
+(817)371-6622
+Brandon Johnson
+'''
+
+print("\n### |"+"|\n### |".join(names.split('\n')) + '|')
+print()
+pp.pprint(names)
+
+print('\n---- 9.1a')
+rex_pattern = re.compile(r'^\n(\*{3}\d{8})\n\d{8}')
+for f in rex_pattern.finditer(names):
+  print("Span        : %s" % repr(f.span()))
+  print("Groups      : %s" % repr(f.groups()))
+  print('--')
+
+print('\n---- 9.1b')
+rex_pattern = re.compile(r'^\n(\*{3}\d{8})', re.MULTILINE)
+for f in rex_pattern.finditer(names):
+  print("Span        : %s" % repr(f.span()))
+  print("Groups      : %s" % repr(f.groups()))
+  print('--')
+
+print('\n---- 9.2')
+rex_pattern = re.compile(r'^\n(\*{3}\d{8})\s+(\d{8})')
+for f in rex_pattern.finditer(names):
+  print("Span        : %s" % repr(f.span()))
+  print("Groups      : %s" % repr(f.groups()))
+  print('--')
+
+print('\n---- 9.3')
+rex_pattern = re.compile(r'\*{3}(\d{8})')
+for f in rex_pattern.finditer(names):
+  print("Span        : %s" % repr(f.span()))
+  print("Groups      : %s" % repr(f.groups()))
+  print('--')
+
+print('\n---- 9.4')
+rex_pattern = re.compile(r'\*{3}(\d{8}).*', re.MULTILINE)
+for f in rex_pattern.finditer(names):
+  print("Span        : %s" % repr(f.span()))
+  print("Groups      : %s" % repr(f.groups()))
+  print('--')
+
+print('\n---- 9.5')
+# rex_pattern = re.compile(r'\n^\*{3}(\d{8})\n(\d{8})\n(\(*\d{3}(?:\)|\-|\.)\d{3}(?:\-|\.)\d{4})\n(\w+)\s+(\w+)',re.MULTILINE)
+rex_pattern = re.compile(r'\n^\*{3}(\d{8})\n(\d{8})\n(\(*\d{3}[\)\-\.]\d{3}[\-|\.]\d{4})\n(\w+)\s+(\w+)',re.MULTILINE)
+
+for f in rex_pattern.finditer(names):
+  print("Span        : %s" % repr(f.span()))
+  print("Groups      : %s" % repr(f.groups()))
+  print('--')
+
+print('\n------------------ Example #10 --------------------------\n')
+
+instring = 'Janice is 22 and Theon is 33.\nGabriel is 44 and Joey is 21.'
+pattern  = re.compile(r'([A-Z][a-z]+)', re.MULTILINE)
+fiter    = pattern.finditer(instring)
+
+for f in fiter:
+  print("Group       : %s" % repr(f.group()))
+  print("Groups      : %s" % repr(f.groups()))
+  print("Start       : %s" % repr(f.start()))
+  print("End         : %s" % repr(f.end()))
+  print("Span        : %s" % repr(f.span()))
+  print("Pattern     : %s" % repr(f.re.pattern))
+  print("String      : %s" % repr(f.string))
+  print('----')
+  

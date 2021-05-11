@@ -1,0 +1,26 @@
+#!/bin/bash
+
+ps -ef | grep pmon | grep -v grep | grep -v perl | grep -v ASM | grep -v DBFS |\
+while read PMON; do
+   INST=`echo "$PMON" | awk {' print $8 '} | cut -f3 -d_`
+  echo $INST
+
+  MAIN_ENV=~/.env/main.env
+  if [ -r $MAIN_ENV ]; then
+     . $MAIN_ENV $INST
+  else
+     echo 'Could not open $MAIN_ENV for read.'
+  fi
+
+  sqlplus -s /nolog <<-EOF
+  connect / as sysdba
+  set head off
+  set trimspool on
+  select 'Connected to: '|| INSTANCE_NAME from v\$instance;
+  select 'Files: '||sum(bytes)/(1024*1024*1024) mbytes from v\$datafile; 
+  select 'Redo: '||sum(bytes)/(1024*1024*1024) mbytes from v\$logfile a, v\$log b  where a.group#=b.group#;   
+  select 'Tempfiles: '||sum(bytes)/(1024*1024*1024) mbytes from v\$tempfile where status='ONLINE'; 
+EOF
+
+done
+

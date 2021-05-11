@@ -1,0 +1,2 @@
+SELECT VALUE FROM V$OPTION WHERE PARAMETER = 'Unified Auditing'
+/

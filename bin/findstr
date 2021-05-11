@@ -1,0 +1,81 @@
+#!/usr/bin/ksh
+
+#===============================================
+#  Author:  Randy Johnson
+#  Program: findstr 
+#  Purpose: Traverses directories and $GREPs for a specified string
+#  Use:
+#==============================================
+
+GREP=/bin/grep
+
+# Function Declarations
+###############################################################
+function strsearch {
+
+   if [ "$STDERR" = T ]; then
+      $GREP -qi "$SRCHSTRING" $FNAME 2>/dev/null 
+   else
+      $GREP -qi "$SRCHSTRING" $FNAME  
+   fi
+   return $?
+}
+
+function buildlist {
+   if [ "$STDERR" = T ]; then
+      find $LOC -name "$FSPEC" -print > $TMPFILE 2>/dev/null
+   else
+      find $LOC -name "$FSPEC" -print > $TMPFILE 
+   fi
+   return
+}
+
+# Main Program
+###############################################################
+clear
+
+PID=$$
+TMPFILE=/tmp/$PID.findstr
+
+USAGE="usage: $0 [stderr] \$STARTING_DIRECTORY \$FILE_SPEC \$SEARCH_STR\n"
+
+if [ "$1" = '-?' ]; then
+   echo $USAGE
+   exit 0
+fi 
+
+if [ $# -lt 3  ]; then
+   echo "$0: error: incorrect arguments...\n"
+   echo $USAGE
+   exit 1
+fi
+
+if [ "$1" = stderr ]; then
+   STDERR=T
+   shift
+   echo "Redirecting stderr output to bit bucket."
+fi
+
+LOC=$1
+FSPEC=$2
+SRCHSTRING=$3
+echo $SRCHSTRING
+
+print "Searching \"$LOC\"" and all subdirectories for files like: "\"$FSPEC\"" containing all forms of \"$SRCHSTRING\"
+
+buildlist
+
+echo '  Hit list: '
+echo '  --------------------------------------------'
+exec 0<$TMPFILE
+while read FNAME 
+do
+   strsearch
+   RC=$?
+   [ $RC = 0 ] && echo "  $FNAME"
+done
+echo '  --------------------------------------------'
+echo '  Search Complete!\n '
+
+rm $TMPFILE
+

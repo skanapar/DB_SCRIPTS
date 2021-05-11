@@ -1,0 +1,18 @@
+#!/u01/app/oracle/product/11.2.0/dbhome_1/perl/bin/perl
+
+use DBI;
+                         
+$dbname   = 'paprd1'; 
+$user     = 'system';
+$password = 'Ske1et0n'; 
+$dbd      = 'Oracle';
+$conn     = "dbi:$dbd:$dbname";
+
+print "Connecting to database\n";
+$dbh = DBI->connect( $conn,$user,$password);
+$cur = $dbh->prepare('select tablespace_name from dba_tablespaces');
+$cur->execute();
+while (($tablespace_name) = $cur->fetchrow) {
+   print "$tablespace_name\n";
+}
+

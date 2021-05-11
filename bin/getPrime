@@ -1,0 +1,872 @@
+#!/bin/env python
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+import sys
+
+from getopt     import getopt
+from optparse   import OptionParser
+from os         import environ
+from os.path    import isfile
+from os.path    import basename
+from re         import match
+from re         import search
+from subprocess import Popen
+from subprocess import PIPE
+from subprocess import STDOUT
+from subprocess import call
+from string     import strip
+from string     import find
+from string     import split
+from string     import join
+from string     import atoi
+from string     import lower
+from string     import upper
+from sys        import exit
+from sys        import exc_info
+from sys        import argv
+from signal     import SIGPIPE
+from signal     import SIG_DFL
+from signal     import signal
+from traceback  import format_tb
+
+
+# For handling termination in stdout pipe.
+#  ex. when you run: oerrdump | head
+#--------------------------------------------
+signal(SIGPIPE, SIG_DFL)
+
+# Define Constant Variables
+CmdHome                = '/opt/ipd'
+CmdBin                 = CmdHome + '/bin'
+CmdLog                 = CmdHome + '/log'
+CmdEtc                 = CmdHome + '/etc'
+CmdTmp                 = CmdHome + '/tmp'
+Cmd                    = basename(argv[0])
+CmdPrefix              = Cmd.split('.')[0]
+CmdDesc                = 'Get Prime (' + Cmd + ')'
+VersionDate            = 'Tue Oct 14 16:00:25 CDT 2014'
+Version                = '1.00'
+Sql                    = ''
+OracleHome             = '/u01/app/oracle/product/11.2.0.4/dbhome_1'
+environ['ORACLE_HOME'] = OracleHome
+cn_SQLPLUS             = OracleHome + '/bin/sqlplus'
+cn_PRIMECON            = 'tam_read_user/tr123usr@REMDYRP1'
+cn_APEXCON             = 'ipd_apex/jpM0rgan14@odc01apx'
+errChk                 = False
+Colsep                 = '!~!'
+Now                    = datetime.now()
+LogfileName            = CmdLog + '/' + CmdPrefix + '_' + Now.strftime("%Y%m%d_%H%M%S") + '.log'
+Usage                  = Cmd + ' -p <PrimeNumber> -b <BuildName>'
+
+####################################################################
+# Main
+####################################################################
+def main(argv):
+
+   # Open the session log for write.
+   try:
+      logFile = open(LogfileName, 'w')
+   except:
+      print 'Could not open log file for write:', LogFileName
+      exit(1)
+
+   # Process command line options
+   ArgParser = OptionParser(Usage)
+
+   ArgParser.add_option("-p",  dest="Prime",     default='',    type=str,                      help="Prime number")
+   ArgParser.add_option("-b",  dest="BuildName", default='',    type=str,                      help="Build name")
+   ArgParser.add_option("--v", dest="Version",   default=False,           action="store_true", help="Print version info")
+
+   Options, args = ArgParser.parse_args()
+
+   # Print version information (-v option)
+   if (Options.Version):
+      Banner = CmdDesc + ', Release ' + Version + ' Production, ' + VersionDate
+      print Banner
+      exit()
+
+   Prime = Options.Prime
+   BuildName = Options.BuildName
+
+   if (Prime == '' and BuildName == ''):
+      print 'Both PrimeNumber (-p option) and BuildName (-b option) are required.'
+      print Usage
+      logFile.write('Both PrimeNumber (-p option) and BuildName (-b option) are required.\n')
+      logFile.write('\n' + Usage + '\n')
+ 
+      if (not logFile.closed):
+         logFile.close()
+      exit(1)
+
+   print '\n============================================================================================================================'
+   print '%s: Release %s Production %71s' % (CmdDesc, Version, Now.strftime("%Y-%m-%d %H:%M"))
+   print '============================================================================================================================'
+   logFile.write('============================================================================================================================\n')
+   logFile.write('%s: Release %s Production %71s\n' % (CmdDesc, Version, Now.strftime("%Y-%m-%d %H:%M")))
+   logFile.write('============================================================================================================================\n')
+
+
+   jpbSequence = getSeqValue('jpb_id_seq')
+   print 'jpbSequence: %s\n', (jpbSequence)
+   logFile.write('jpbSequence: %s\n', (jpbSequence))
+
+   creBuild(jpbSequence, Prime, BuildName)
+
+   primeOut = getPrime(Prime)
+
+   # Manipulate the string of lines into a new list, then traverse the list
+   print 'Prime Retrieval Complete, returning ', len(primeOut.split('\n')), ' records.'
+   print 'Inserting Records into detail table ... '
+   logFile.write('Prime Retrieval Complete, returning %s records.\n', (len(primeOut.split('\n'))))
+   logFile.write('Inserting Records into detail table ...\n')
+
+   for newLine in primeOut.split('\n'):
+      lineComponent = []
+      lineComponent = newLine.split(Colsep)
+      insertComponent(jpbSequence, Prime, lineComponent)
+
+   print 'Insert complete.  Associating Build Parameters ...'
+   logFile.write('Insert complete.  Associating Build Parameters ...\n')
+   
+   genParameter(jpbSequence)
+
+   if (not logFile.closed):
+      logFile.close()
+   exit(0)
+
+####################################################################
+#  getPrime
+####################################################################
+def getPrime(pPrime):
+
+   sqlQuery  = "set linesize 400\n"
+   sqlQuery += "set pagesize 0\n"
+   sqlQuery += "select substr(answers.status_value,1,30)            ||'" + Colsep + "'||\n"
+   sqlQuery += "       substr(answers.status_t,1,15)                ||'" + Colsep + "'||\n"
+   sqlQuery += "       p.entry_id                                   ||'" + Colsep + "'||\n"
+   sqlQuery += "       substr(hostname,1,40)                        ||'" + Colsep + "'||\n"
+   sqlQuery += "       substr(questions.question,1,70)              ||'" + Colsep + "'||\n"
+   sqlQuery += "       substr(answers.answer,1,70)                  ||'" + Colsep + "'||\n"
+   sqlQuery += "       answers.create_date                          ||'" + Colsep + "'||\n"
+   sqlQuery += "       answers.modified_date                        ||'" + Colsep + "'||\n"
+   sqlQuery += "       answers.answer_id\n"
+   sqlQuery += "  from tams_prime_mv p,\n"
+   sqlQuery += "       qae_questions_mv questions,\n"
+   sqlQuery += "       qae_answers_mv answers,\n"
+   sqlQuery += "       tams_prime_equipment_instan_mv pei,\n"
+   sqlQuery += "       tams_prime_equipment_mv pe\n"
+   sqlQuery += " where p.link_id_guid = pe.link_id\n"
+   sqlQuery += "   and pe.entry_id = pei.prime_eqpt_entry_id\n"
+   sqlQuery += "   and answers.source_request_id = pei.entry_id\n"
+   sqlQuery += "   and answers.guid_question = questions.guid\n"
+   sqlQuery += "   and answers.entry_visibility_t = 'Visible'\n"
+   sqlQuery += "   and answers.status = 0\n"
+   sqlQuery += "   and questions.status = 1\n"
+   sqlQuery += "   and p.entry_id = '" + pPrime + "'\n"
+   sqlQuery += " group by substr(answers.status_value,1,30),\n"
+   sqlQuery += "          substr(answers.status_t,1,15),\n"
+   sqlQuery += "          p.entry_id,\n"
+   sqlQuery += "          substr(hostname,1,40),\n"
+   sqlQuery += "          substr(questions.question,1,70),\n"
+   sqlQuery += "          substr(answers.answer,1,70),\n"
+   sqlQuery += "          answers.create_date,\n"
+   sqlQuery += "          answers.modified_date,\n"
+   sqlQuery += "          answers.answer_id;"
+
+   # Open the pipe and start the process for gathering the data
+   (SqlOut) = RunSqlplus(sqlQuery, errChk, cn_PRIMECON)
+
+   if (SqlOut == ''):
+      return('')
+   else:
+      return(SqlOut)
+
+####################################################################
+#  insertComponent
+####################################################################
+def insertComponent(BuildId, pPrime, pLineComponent):
+
+   sqlInsert  = "set pagesize 0   \n"
+   sqlInsert += "set feedback on \n"
+   sqlInsert += "insert into tams_prime_detail (\n"
+   sqlInsert += "   tpd_id,\n"
+   sqlInsert += "   tpd_status_value,\n"
+   sqlInsert += "   tpd_status,\n"
+   sqlInsert += "   tpd_entry_id,\n"
+   sqlInsert += "   tpd_hostname,\n"
+   sqlInsert += "   tpd_question,\n"
+   sqlInsert += "   tpd_answer,\n"
+   sqlInsert += "   tpd_create_date,\n"
+   sqlInsert += "   tpd_modified_date,\n"
+   sqlInsert += "   tpd_answer_id,\n"
+   sqlInsert += "   jpb_id\n"
+   sqlInsert += ") values (\n"
+   sqlInsert += "   tpd_id_seq.nextval,\n"
+   sqlInsert += "   '" + pLineComponent[0] + "',\n"
+   sqlInsert += "   '" + pLineComponent[1] + "',\n"
+   sqlInsert += "   '" + pLineComponent[2] + "',\n"
+   sqlInsert += "   '" + pLineComponent[3] + "',\n"
+   sqlInsert += "   '" + pLineComponent[4] + "',\n"
+   sqlInsert += "   '" + pLineComponent[5] + "',\n"
+   sqlInsert += "   to_date('" + (pLineComponent[6]) + "','dd-MON-yy'),\n"
+   sqlInsert += "   to_date('" + (pLineComponent[7]) + "','dd-MON-yy'),\n"
+   sqlInsert += "   '" + pLineComponent[8] + "',\n"
+   sqlInsert += "   '" + BuildId + "'\n"
+   sqlInsert += ");\n\n"
+   sqlInsert += "COMMIT;"
+
+   (SqlOut) = RunSqlplus(sqlInsert, errChk, cn_APEXCON)
+
+   # Check Sqlplus output for the expected '1 row created.'
+   InsRows = 0
+   for line in SqlOut.split('\n'):
+      matchObj = search('[0-9]+' + ' row created.', line)
+      matchObj = match('[0-9]+' + ' row created.', line)
+      
+      if (matchObj):
+         InsRows = matchObj.group().split()[0]
+
+   if (int(InsRows) == 1):
+      print '\nRow successfully inserted into the tams_prime_detail table.'
+      logFile.write('\nRow successfully inserted into the tams_prime_detail table.\n')
+   else:
+      print '\nFailed to insert into the tams_prime_detail table.'
+      logFile.write('\nFailed to insert into the tams_prime_detail table.\n')
+
+   print 'tpd_id             : tpd_id_seq.nextval'
+   print 'tpd_status_value   :', pLineComponent[0]
+   print 'tpd_status         :', pLineComponent[1]
+   print 'tpd_entry_id       :', pLineComponent[2]
+   print 'tpd_hostname       :', pLineComponent[3]
+   print 'tpd_question       :', pLineComponent[4]
+   print 'tpd_answer         :', pLineComponent[5]
+   print 'tpd_create_date    :', pLineComponent[6]
+   print 'tpd_modified_date  :', pLineComponent[7]
+   print 'tpd_answer_id      :', pLineComponent[8]
+   print 'jpb_id             :', BuildId
+   logFile.write('tpd_id             : tpd_id_seq.nextval\n')
+   logFile.write('tpd_status_value   : %s\n'% (pLineComponent[0]))
+   logFile.write('tpd_status         : %s\n'% (pLineComponent[1]))
+   logFile.write('tpd_entry_id       : %s\n'% (pLineComponent[2]))
+   logFile.write('tpd_hostname       : %s\n'% (pLineComponent[3]))
+   logFile.write('tpd_question       : %s\n'% (pLineComponent[4]))
+   logFile.write('tpd_answer         : %s\n'% (pLineComponent[5]))
+   logFile.write('tpd_create_date    : %s\n'% (pLineComponent[6]))
+   logFile.write('tpd_modified_date  : %s\n'% (pLineComponent[7]))
+   logFile.write('tpd_answer_id      : %s\n'% (pLineComponent[8]))
+   logFile.write('jpb_id             : %s\n'% (BuildId))
+
+####################################################################
+#  creBuild
+####################################################################
+def creBuild(Sequence, Prime, BuildName):
+
+   sqlInsert  = "set pagesize 0\n"
+   sqlInsert += "set feedback on\n"
+   sqlInsert += "insert into prime_build (\n"
+   sqlInsert += "  jpb_id,\n"
+   sqlInsert += "  jpb_build_name,\n"
+   sqlInsert += "  jpb_status,\n"
+   sqlInsert += "  jpb_start_time,\n"
+   sqlInsert += "  jpb_prime_number\n"
+   sqlInsert += ") values (\n"
+   sqlInsert += "  " + Sequence + ",\n"
+   sqlInsert += "  '" + BuildName + "',\n"
+   sqlInsert += "  'Initialize',\n"
+   sqlInsert += "  sysdate,\n"
+   sqlInsert += "  " + Prime + "\n"
+   sqlInsert += ");\n\n"
+   sqlInsert += "COMMIT;"
+
+   (SqlOut) = RunSqlplus(sqlInsert, errChk, cn_APEXCON)
+
+   # Check Sqlplus output for the expected '1 row created.'
+   InsRows = 0
+   for line in SqlOut.split('\n'):
+      matchObj = search('[0-9]+' + ' row created.', line)
+      matchObj = match('[0-9]+' + ' row created.', line)
+      
+      if (matchObj):
+         InsRows = matchObj.group().split()[0]
+
+   if (int(InsRows) == 1):
+      print '\nRow successfully inserted into the tams_prime_detail table.'
+      logFile.write('\nRow successfully inserted into the tams_prime_detail table.\n')
+
+   else:
+      print '\nFailed to insert into the tams_prime_detail table.'
+      logFile.write('\nFailed to insert into the tams_prime_detail table.\n')
+
+   print ' jpb_id           :', Sequence
+   print ' DbUniqueName     :', BuildName
+   print ' jpb_status       : Initialize'
+   print ' jpb_start_time   : sysdate'
+   print ' jpb_prime_number :', Prime
+   logFile.write(' jpb_id           : %s\n' % (Sequence))
+   logFile.write(' DbUniqueName     : %s\n' % (BuildName))
+   logFile.write(' jpb_status       : Initialize\n')
+   logFile.write(' jpb_start_time   : sysdate\n')
+   logFile.write(' jpb_prime_number : %s\n' % (Prime))
+
+
+####################################################################
+#  getSequence
+####################################################################
+def getSeqValue(pSeqName):
+
+   sqlSeq = "select jpb_id_seq.nextval from dual;"
+   (SqlOut) = RunSqlplus(sqlSeq, errChk, cn_APEXCON)
+
+   if (SqlOut == ''):
+      return(0)
+   else:
+      return(SqlOut)
+
+####################################################################
+#  genParameter
+####################################################################
+def genParameter(BuildId):
+
+   sqlProc  = "set serveroutput on size 1000000\n"
+   sqlProc += "exec sp_genParameter('" + BuildId + "');\n\n"
+   sqlProc += "COMMIT;\n"
+
+   (SqlOut) = RunSqlplus(sqlProc, errChk, cn_APEXCON)
+
+   return(SqlOut)
+
+# --------------------------------------
+# ---- Function Definitions ------------
+# --------------------------------------
+# Def  : FormatExceptionInfo()
+# Desc : Format and print Python stack trace
+# Args : maxTBlevel (default 5). Levels of the call stack.
+# Retn : cla=name of exception class, exc=details of exception,
+#        trbk=traceback info (call stack)
+#---------------------------------------------------------------------------
+def FormatExceptionInfo(maxTBlevel=5):
+   cla, exc, trbk = exc_info()
+   excName = cla.__name__
+   try:
+      excArgs = exc.__dict__["args"]
+   except KeyError:
+      excArgs = "<no args>"
+   excTb = format_tb(trbk, maxTBlevel)
+   
+   print excName, excArgs
+   for line in excTb:
+      print line
+      logFile.write(line + '\n')
+   return(excName, excArgs, excTb)
+# End FormatExceptionInfo()
+
+
+# Def : RunSqlplus()
+# Desc: Calls sqlplus and runs a sql script passed in in the Sql parameter.
+#       Optionally calls ErrorCheck() to scan for errors then calls PrintError
+#       if any are found. The call stack looks like this...
+#       CallingRoutine
+#          ^    +-----> RunSqlplus()
+#          |                +-----> ErrorCheck()
+#          |                +-----> PrintError()
+#          |                            +-----> LookupError()
+#          |                                          |
+#          |                +--> if error exit(rc)    |
+#          +------------------------------------------+
+#
+#          1) Calling routing calls RunSqlplus
+#                - 1 parameter. SQL to run (string)
+#                - Returns Result Set (1 string)
+#          2) RunSqlplus calls ErrorCheck
+#                - 2 parameters. Stdout (string), and ComponentList (List of components for looking up potential errors)
+#                - Returns 2 values. Return code (int), and ErrorStack which is a list of lists ([ErrorString, line]
+#          3) RunSqlplus calls PrintError
+#                - Only if return code from ErrorCheck != 0 (an error was found)
+#                - Calls PrintError with three parameters:
+#                    Sql       = the original SQL statement run.
+#                    Stdout    = the output generated by the sqlplus session.
+#                    ErrorList = the list of error codes and lines containing the errors (see #2 above).
+#                - Returns Stdout to calling routine.
+#
+# Args: Sql, string containing SQL to execute.
+#       ErrChk, True/False determines whether or not to check output for errors.
+#       ConnectString, used for connecting to the database
+# Retn: If ErrChk=True then return:
+#          rc (return code, integer, 0=no errors)
+#          Output (string, stdout+stderr)
+#          ErrorList (list, error stack)
+#       If ErrChk=False then return Stdout only
+#---------------------------------------------------------------------------
+def RunSqlplus(Sql, ErrChk=False, ConnectString='/ as sysdba'):
+   SqlHeader = ''
+ 
+   #SqlHeader  = "-- alter session set nls_date_format = 'YYYYMMDD HH24:MI:SS';\n"
+   #SqlHeader += "-- set serveroutput on size 1000000 format wrapped\n"
+   #SqlHeader += "-- set serveroutput on size unlimited\n"
+   #SqlHeader += "-- set truncate after linesize on\n"
+   #SqlHeader += "\n"
+   SqlHeader += "btitle                          off\n"
+   SqlHeader += "repfooter                       off\n"
+   SqlHeader += "repheader                       off\n"
+   SqlHeader += "ttitle                          off\n"
+   SqlHeader += "set appinfo                     off\n"
+   SqlHeader += "set arraysize                   500\n"
+   SqlHeader += "set autocommit                  off\n"
+   SqlHeader += "set autoprint                   off\n"
+   SqlHeader += "set autorecovery                off\n"
+   SqlHeader += "set autotrace                   off\n"
+   SqlHeader += "set blockterminator             \".\"\n"
+   SqlHeader += "set cmdsep                      off\n"
+   SqlHeader += "set colsep                      \" \"\n"
+   SqlHeader += "set concat                      \".\"\n"
+   SqlHeader += "set copycommit                  0\n"
+   SqlHeader += "set copytypecheck               on\n"
+   SqlHeader += "set define                      \"&\"\n"
+   SqlHeader += "set describe                    depth 1 linenum off indent on\n"
+   SqlHeader += "set document                    off\n"
+   SqlHeader += "set echo                        off\n"
+   SqlHeader += "set embedded                    off\n"
+   SqlHeader += "set errorlogging                off\n"
+   SqlHeader += "set escape                      off\n"
+   SqlHeader += "set escchar                     off\n"
+   SqlHeader += "set exitcommit                  on\n"
+   SqlHeader += "set feedback                    off\n"
+   SqlHeader += "set flagger                     off\n"
+   SqlHeader += "set flush                       on\n"
+   SqlHeader += "set heading                     off\n"
+   SqlHeader += "set headsep                     \"|\"\n"
+   SqlHeader += "set linesize                    32767\n"
+   SqlHeader += "set loboffset                   1\n"
+   SqlHeader += "set logsource                   \"\"\n"
+   SqlHeader += "set long                        10000000\n"
+   SqlHeader += "set longchunksize               10000000\n"
+   SqlHeader += "set markup html                 off \n"
+   SqlHeader += "set newpage                     1\n"
+   SqlHeader += "set null                        \"\"\n"
+   SqlHeader += "set numformat                   \"\"\n"
+   SqlHeader += "set numwidth                    15\n"
+   SqlHeader += "set pagesize                    50\n"
+   SqlHeader += "set pause                       off\n"
+   SqlHeader += "set pno                         0\n"
+   SqlHeader += "set recsep                      wrap\n"
+   SqlHeader += "set recsepchar                  \" \"\n"
+   SqlHeader += "set securedcol                  off\n"
+   SqlHeader += "set serveroutput                on size unlimited\n"
+   SqlHeader += "set shiftinout                  invisible\n"
+   SqlHeader += "set showmode                    off\n"
+   SqlHeader += "set space                       1\n"
+   SqlHeader += "set sqlblanklines               off\n"
+   SqlHeader += "set sqlcase                     mixed\n"
+   SqlHeader += "set sqlcontinue                 \"> \"\n"
+   SqlHeader += "set sqlnumber                   on\n"
+   SqlHeader += "set sqlprefix                   \"#\"\n"
+   SqlHeader += "set sqlterminator               \";\"\n"
+   SqlHeader += "set suffix                      sql\n"
+   SqlHeader += "set tab                         off\n"
+   SqlHeader += "set termout                     on\n"
+   SqlHeader += "set time                        off\n"
+   SqlHeader += "set timing                      off\n"
+   SqlHeader += "set trimout                     on\n"
+   SqlHeader += "set trimspool                   on\n"
+   SqlHeader += "set underline                   \"-\"\n"
+   SqlHeader += "set verify                      off\n"
+   SqlHeader += "set wrap                        on\n"
+   SqlHeader += "set xmloptimizationcheck        off\n"
+   SqlHeader += "\n"
+ 
+   SqlHeader += "column BLOCKS                   format 999,999,999,999\n"
+   SqlHeader += "column BYTES                    format 999,999,999,999\n"
+   SqlHeader += "column BYTES_CACHED             format 999,999,999,999\n"
+   SqlHeader += "column BYTES_COALESCED          format 999,999,999,999\n"
+   SqlHeader += "column BYTES_FREE               format 999,999,999,999\n"
+   SqlHeader += "column BYTES_USED               format 999,999,999,999\n"
+   SqlHeader += "column CLU_COLUMN_NAME          format a40\n"
+   SqlHeader += "column CLUSTER_NAME             format a30\n"
+   SqlHeader += "column CLUSTER_TYPE             format a10\n"
+   SqlHeader += "column COLUMN_NAME              format a40\n"
+   SqlHeader += "column COMPATIBILITY            format a15\n"
+   SqlHeader += "column CONSTRAINT_NAME          format a30\n"
+   SqlHeader += "column DATABASE_COMPATIBILITY   format a15\n"
+   SqlHeader += "column DB_LINK                  format a20\n"
+   SqlHeader += "column DBNAME                   format a10\n"
+   SqlHeader += "column DIRECTORY_NAME           format a30\n"
+   SqlHeader += "column DIRECTORY_PATH           format a100\n"
+   SqlHeader += "column EXTENTS                  format 999,999\n"
+   SqlHeader += "column FILE_NAME                format a50\n"
+   SqlHeader += "column FUNCTION_NAME            format a30\n"
+   SqlHeader += "column GBYTES                   format 999,999,999\n"
+   SqlHeader += "column GRANTEE                  format a15\n"
+   SqlHeader += "column GRANTEE_NAME             format a15\n"
+   SqlHeader += "column HOST                     format a20\n"
+   SqlHeader += "column HOST_NAME                format a15\n"
+   SqlHeader += "column INDEX_NAME               format a30\n"
+   SqlHeader += "column INDEX_OWNER              format a15\n"
+   SqlHeader += "column INDEX_TYPE               format a10\n"
+   SqlHeader += "column INSTANCE_NAME            format a10\n"
+   SqlHeader += "column IOT_NAME                 format a30\n"
+   SqlHeader += "column IOT_TYPE                 format a15\n"
+   SqlHeader += "column JOB_MODE                 format a10\n"
+   SqlHeader += "column KSPPINM                  format a20\n"
+   SqlHeader += "column KSPPSTVL                 format a20\n"
+   SqlHeader += "column MASTER_OWNER             format a15\n"
+   SqlHeader += "column MBYTES                   format 999,999,999\n"
+   SqlHeader += "column MEMBER                   format a60\n"
+   SqlHeader += "column MESSAGE                  format a50\n"
+   SqlHeader += "column MVIEW_NAME               format a30\n"
+   SqlHeader += "column MVIEW_TABLE_OWNER        format a15\n"
+   SqlHeader += "column NAME                     format a50\n"
+   SqlHeader += "column NUM_ROWS                 format 999,999,999\n"
+   SqlHeader += "column OBJECT_NAME              format a30\n"
+   SqlHeader += "column OBJECT_OWNER             format a15\n"
+   SqlHeader += "column OBJECT_TYPE              format a13\n"
+   SqlHeader += "column OPERATION                format a10\n"
+   SqlHeader += "column OPNAME                   format a40\n"
+   SqlHeader += "column OWNER                    format a15\n"
+   SqlHeader += "column OWNER_NAME               format a15\n"
+   SqlHeader += "column PARTITION_NAME           format a30\n"
+   SqlHeader += "column PARTNAME                 format a30\n"
+   SqlHeader += "column PARTTYPE                 format a10\n"
+   SqlHeader += "column PATH                     format a40\n"
+   SqlHeader += "column R_CONSTRAINT_NAME        format a30\n"
+   SqlHeader += "column R_OWNER                  format a15\n"
+   SqlHeader += "column SEGMENT_NAME             format a30\n"
+   SqlHeader += "column SEGMENT_TYPE             format a10\n"
+   SqlHeader += "column SEQUENCE_NAME            format a30\n"
+   SqlHeader += "column SEQUENCE_OWNER           format a15\n"
+   SqlHeader += "column SNAPNAME                 format a30\n"
+   SqlHeader += "column SNAPSHOT                 format a30\n"
+   SqlHeader += "column STATE                    format a10\n"
+   SqlHeader += "column STATISTIC                format a50\n"
+   SqlHeader += "column SYNONYM_NAME             format a30\n"
+   SqlHeader += "column TABLE_NAME               format a30\n"
+   SqlHeader += "column TABLE_OWNER              format a15\n"
+   SqlHeader += "column TABLE_SCHEMA             format a15\n"
+   SqlHeader += "column TABLESPACE_NAME          format a30\n"
+   SqlHeader += "column TARGET_DESC              format a35\n"
+   SqlHeader += "column TRIGGER_NAME             format a30\n"
+   SqlHeader += "column TRIGGER_OWNER            format a15\n"
+   SqlHeader += "column TYPE_NAME                format a30\n"
+   SqlHeader += "column TYPE_OWNER               format a15\n"
+   SqlHeader += "column USED_BLOCKS              format 999,999,999,999\n"
+   SqlHeader += "column USERNAME                 format a20\n"
+   SqlHeader += "column VALUE                    format a30\n"
+   SqlHeader += "column VIEW_NAME                format a30\n"
+   SqlHeader += "column VIEW_TYPE                format a10\n"
+ 
+   Sql = SqlHeader + Sql
+ 
+   # Unset the SQLPATH environment variable.
+   if ('SQLPATH' in environ.keys()):
+      del environ['SQLPATH']
+ 
+   if (ConnectString == '/ as sysdba'):
+      if (not('ORACLE_SID' in environ.keys())):
+         print 'ORACLE_SID must be set if connect string is:' + ' \'' + ConnectString + '\''
+         logFile.write('ORACLE_SID must be set if connect string is: %s\n' % (ConnectString)
+         return (1, '', [])
+      if (not('ORACLE_HOME' in environ.keys())):
+         OracleSid, OracleHome = SetOracleEnv(environ['ORACLE_SID'])
+      
+   # Set the location of the ORACLE_HOME. If ORACLE_HOME is not set
+   # then we'll use the first one we find in the oratab file.
+   if ('ORACLE_HOME' in environ.keys()):
+      OracleHome = environ['ORACLE_HOME']
+      Sqlplus = OracleHome + '/bin/sqlplus'
+   else:
+     Oratab = LoadOratab()
+     if (len(Oratab) >= 1):
+        SidList = Oratab.keys()
+        OracleSid  = SidList[0]
+        OracleHome = Oratab[SidList[0]]
+        environ['ORACLE_HOME'] = OracleHome
+        Sqlplus = OracleHome + '/bin/sqlplus'
+     else:
+        print 'ORACLE_HOME is not set'
+        logFile.write('ORACLE_HOME is not set\n')
+        return (1, '', [])
+ 
+   # Start Sqlplus and login
+   Sqlproc = Popen([Sqlplus, '-S', '-R', '3', ConnectString], stdin=PIPE, stdout=PIPE, stderr=STDOUT, \
+      shell=False, universal_newlines=True, close_fds=True)
+ 
+   # Execute the SQL
+   Sqlproc.stdin.write(Sql)
+ 
+   # Fetch the output
+   Stdout, SqlErr = Sqlproc.communicate()
+   Stdout = Stdout.strip()      # remove leading/trailing whitespace
+ 
+   # Check for sqlplus errors
+   if (ErrChk):
+      from Oracle import ErrorCheck, LookupError
+      # Components are installed applications/components such as sqlplus, import, export, rdbms, network, ...
+      # ComponentList contains a list of all components for which the error code will be searched.
+      # For example a component of rdbms will result in ORA-nnnnn errors being included in the search.
+      # ALL_COMPONENTS is an override in the ErrorCheck function that results in *all* installed components
+      # being selected. Searching all component errors is pretty fast so for now we'll just search them all.
+      # -------------------------------------------------------------------------------------------------------
+      #ComponentList = ['sqlplus','rdbms','network','crs','css','evm','has','oracore','plsql','precomp','racg','srvm','svrmgr']
+      #ComponentList = ['ALL_COMPONENTS']
+      ComponentList = ['sqlplus','rdbms', 'oracore']
+      
+      # Brief explanation of what is returned by ErrorCheck()
+      # ------------------------------------------------------
+      # rc is the return code (0 is good, anything else is bad). ErrorList is a list of list structures
+      # (a 2 dimensional arrray in other languages). Each outer element of the array represents 1 error found
+      # Sql output. Each inner element has two parts (2 fields), element[0] is the Oracle error code and
+      # element[1] is the full line of text in which the error was found.
+      # For example an ErrorList might look like this:
+      # [['ORA-00001', 'ORA-00001: unique constraint...'],['ORA-00018', 'ORA-00018, 00000, "maximum number of..."']]
+      (rc, ErrorList) = ErrorCheck(Stdout, ComponentList)
+      return(rc,Stdout,ErrorList)
+   else:
+      return(Stdout)
+# End RunSqlplus()
+
+
+# Def : ErrorCheck()
+# Desc: Check tnsping, sqlplus, crsctl, srvctl output for errors.
+# Args: Output(output you want to scan for errors)
+# Retn: Returns 0=no errors or 1=error found, and error stack (in list form)
+#-------------------------------------------------------------------------
+def ErrorCheck(Stdout, ComponentList=['ALL_COMPONENTS']):
+   from Oracle import LoadFacilities
+   
+   FacilityList = []
+   ErrorStack   = []
+   rc           = 0
+   
+   if ('ORACLE_HOME' in environ.keys()):
+      OracleHome = environ['ORACLE_HOME']
+      FacilitiesFile = OracleHome + '/lib/facility.lis'
+      FacilitiesDD = LoadFacilities(FacilitiesFile)
+   else:
+      print 'ORACLE_HOME is not set'
+      logFile.write('ORACLE_HOME is not set\n')
+      return (1, [])
+   
+   
+     # Determine what errors to check for....
+   for key in sorted(FacilitiesDD.keys()):
+      if (ComponentList[0].upper() == 'ALL_COMPONENTS'):
+         for Component in ComponentList:
+            FacilityList.append(key.upper())
+      else:
+         for Component in ComponentList:
+            if (Component == FacilitiesDD[key]['Component']):
+               FacilityList.append(key.upper())
+   
+   # Component:
+   #  Facility class is major error type such as SP1, SP2, IMP, TNS, ...
+   #  Component class is the application such as sqlplus, rdbms, imp, network.
+   #  A component can have several error facilities. For example the sqlplus
+   #  has 5:
+   #    grep sqlplus  /u01/app/oracle/product/11.2.0.3/dbhome_1/lib/facility.lis
+   #    cpy:sqlplus:*:
+   #    sp1:sqlplus:*:
+   #    sp2:sqlplus:*:
+   #    sp3:sqlplus:*:
+   #    spw:sqlplus:*:
+   #
+   #  The error SP2-06063 breaks down as Component=sqlplus, Facility=sp2, Error=06063. See below:
+   #    SP2-06063 : 06063,0, "When SQL*Plus starts, and after CONNECT commands, the site profile\n"
+   #    SP2-06063 : // *Document: NO
+   #    SP2-06063 : // *Cause:  Usage message.
+   #    SP2-06063 : // *Action:
+   
+   for line in Stdout.split('\n'):
+      for Facility in FacilityList:
+         # Check for warning and error messages
+         matchObj = search(Facility + '-[0-9]+', line)
+         if (matchObj):
+            ErrorString = matchObj.group()
+            rc = 1
+            ErrorStack.append([ErrorString, line])
+   
+   return(rc, ErrorStack)
+# End ErrorCheck()
+
+# Def : LookupError()
+# Desc: Parses the ficiliy file and returns a list of lists (2 dim array)
+#       containing:
+#         facility:component:rename:description
+# Args: Facility file name.
+# Retn: FacilitiesDD
+#---------------------------------------------------------------------------
+def LookupError(Error):
+   MsgList     = []
+   HeaderFound = False
+   
+   if ('ORACLE_HOME' in environ.keys()):
+      OracleHome = environ['ORACLE_HOME']
+      FacilitiesFile = OracleHome + '/lib/facility.lis'
+      FacilitiesDD = LoadFacilities(FacilitiesFile)
+   else:
+      print 'ORACLE_HOME is not set'
+      logFile.write('ORACLE_HOME is not set\n')
+      return (1, [])
+   
+   try:
+      (Facility,ErrCode) = Error.lower().split('-')
+   except:
+      print '\nInvalid error code.'
+      logFile.write('Invalid error code.\n')
+      if (not logFile.closed):
+         logFile.close()
+      exit(1)
+   
+   if (not Facility in FacilitiesDD.keys()):
+      print '\nInvalid facility:', Facility
+      logFile.write('Invalid facility: %s\n', (Facility))
+      if (not logFile.closed):
+         logFile.close()
+      exit(1)
+   else:
+      MessagesFile = OracleHome + '/' + FacilitiesDD[Facility]['Component'] + '/' + 'mesg' + '/' + Facility + 'us.msg'
+   
+   try:
+      msgfil = open(MessagesFile, 'r')
+   except:
+      print '\nCannot open Messages file: ' + MessagesFile + ' for read.'
+      logFile.write('Cannot open Messages file for read: %s', (MessagesFile))
+      if (not logFile.closed):
+         logFile.close()
+      exit(1)
+   
+   MsgFileContents = msgfil.readlines()
+   
+   for line in MsgFileContents:
+     # lines I'm looking for look like this "00003, 00000, "INTCTL: error while se..."
+     # So just looking for something that starts with a string of digits and contains
+     # the error code I'm looking for.
+     if (HeaderFound):
+        matchObj = match(r'//,*', line)
+        if (matchObj):
+           MsgList.append(line.strip())
+        else:
+           return(MsgList)
+     else:
+        matchObj = match('[0]*' + ErrCode + ',', line)
+        if (matchObj):
+           ErrCode = matchObj.group()
+           ErrCode = ErrCode[0:ErrCode.find(',')]
+           MsgList.append(line.strip())
+           HeaderFound = True
+   
+   if (len(MsgList) == 0):
+      # If error code could not be found let's trim off leading 0's and try again...
+      ErrCode = str(int(ErrCode))
+      for line in MsgFileContents:
+         if (HeaderFound):
+            matchObj = match(r'//,*', line)
+            if (matchObj):
+               MsgList.append(line.strip())
+            else:
+               return(MsgList)
+         else:
+            matchObj = match('[0]*' + ErrCode + ',', line)
+            if (matchObj):
+               ErrCode = matchObj.group()
+               ErrCode = ErrCode[0:ErrCode.find(',')]
+               MsgList.append(line.strip())
+               HeaderFound = True
+      
+   if (len(MsgList) == 0):
+      print 'Error not found  : ' + ErrCode
+      print 'Msg file         : ' + MessagesFile
+      logFile.write('Error not found  : %s' % (ErrCode))
+      logFile.write('Msg file         : %s' % (MessagesFile))
+   
+   return(MsgList)
+# End LookupError()
+
+
+# Def : PrintError()
+# Desc: Print a formatted error message.
+# Args: ErrorMsg (the error message to be printed)
+# Retn:
+#---------------------------------------------------------------------------
+def PrintError(Sql, Stdout, ErrorList):
+   print '\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<'
+   print Sql
+   print '\n----\n'
+   print Stdout
+   print '\n----'
+   print
+   for Error in ErrorList:
+      OracleError = Error[0]
+      ErrorString = Error[1]
+      Explanation = LookupError(OracleError)
+      if (len(Explanation) > 0):
+         print '\nExplanation:'
+         print '---------------'
+         for line in Explanation:
+            print line
+   print '>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<\n'
+   
+   logFile.write('\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<\n')
+   logFile.write(Sql + '\n')
+   logFile.write('\n----\n')
+   logFile.write(Stdout)
+   logFile.write('\n----\n\n')
+   for Error in ErrorList:
+      OracleError = Error[0]
+      ErrorString = Error[1]
+      Explanation = LookupError(OracleError)
+      if (len(Explanation) > 0):
+         logFile.write('\nExplanation:\n')
+         logFile.write('---------------')
+         for line in Explanation:
+            logFile.write(line + '\n')
+   logFile.write('>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<\n')
+   
+   return
+# End PrintError()
+
+
+# Def : LoadFacilities()
+# Desc: Parses the ficiliy file and returns a list of lists (2 dim array)
+#       containing:
+#         facility:component:rename:description
+# Args: Facility file name.
+# Retn: FacilitiesDD
+#---------------------------------------------------------------------------
+def LoadFacilities(FacilitiesFile):
+   FacDict = {}
+   FacDD   = {}
+   
+   try:
+      facfil = open(FacilitiesFile, 'r')
+   except:
+      formatExceptionInfo()
+      print '\nCannot open facilities file: ' + FacilitiesFile + ' for read.'
+      logFile.write('Cannot open facilities file: ' + FacilitiesFile + ' for read.\n')
+      if (not logFile.closed):
+         logFile.close()
+      exit(1)
+   
+   FacFileContents = facfil.read().split('\n')
+   for line in FacFileContents:
+      if (not (search(r'^\s*$', line))):   # skip blank lines
+         if (line.find('#') >= 0):
+            line=line[0:line.find('#')]
+         if (line.count(':') == 3):   # ignore lines that do not contain 3 :'s
+            (Facility, Component, OldName, Description) = line.split(':')
+            FacList = [strip(Facility), strip(Component), strip(OldName), strip(Description)]
+            if (Facility != ''):
+               FacDict = {
+                'Component'   : strip(Component),
+                'OldName'      : strip(OldName),
+                'Description' : strip(Description)
+               }
+               FacDD[strip(Facility)] = FacDict
+   return(FacDD)
+# End LoadFacilities()
+
+####################################################################
+#  Call to main...
+####################################################################
+if (__name__ == '__main__'):
+   main(sys.argv[1:])

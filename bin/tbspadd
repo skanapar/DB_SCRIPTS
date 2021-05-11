@@ -1,0 +1,400 @@
+#!/bin/env python
+
+
+###################################################################################################
+# Name:         tbspadd                                                                           #
+# Author:       Randy Johnson                                                                     #
+# Description:  Create new tablespaces for the loader process.                                    #
+# Dependencies: Oracle client including sqlplus.                                                  #
+#                                                                                                 #
+# History:                                                                                        #
+#                                                                                                 #
+# Date       Ver. Who              Change Description                                             #
+# ---------- ---- ---------------- -------------------------------------------------------------- #
+# 08/18/2016 1.00 Randy Johnson    Initial release.                                               #
+###################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+import traceback
+import sys
+from datetime     import datetime
+from datetime     import timedelta
+from datetime     import date
+from optparse     import OptionParser
+from os           import environ
+from os.path      import basename
+from os.path      import join as pathjoin
+from re           import search, compile
+from sys          import argv
+from sys          import exit
+from sys          import version_info
+from sys          import stdout
+from signal       import SIGPIPE
+from signal       import SIG_DFL
+from signal       import signal
+from socket       import gethostname
+from subprocess   import Popen
+from subprocess   import PIPE
+from subprocess   import STDOUT
+from Oracle       import IsExecutable
+from Oracle       import IsReadable
+from Oracle       import Logger
+from Oracle       import RunSqlplus
+from Oracle       import SetOracleEnv
+from Oracle       import PrintError
+from Oracle       import ParseConnectString
+
+
+# ---------------------------------------------------------------------------
+# Def : TablespaceExists()
+# Desc: Checks for existance of a tablespace.
+# Args: Tablespace_Name
+# Retn: True/False
+# ---------------------------------------------------------------------------
+def TablespaceExists(Name):
+
+  Sql  = "set heading  off\n"
+  Sql += "set pagesize 0\n"
+  Sql += "set feedback off\n"
+  Sql += "set echo     off\n"
+  Sql += "\n"
+  Sql += "SELECT " + SqlHeader + "\n"
+  Sql += "       count(*)\n"
+  Sql += "  FROM dba_tablespaces\n"
+  Sql += " WHERE tablespace_name = '" + Name + "';"
+
+  if (ConnStr != ''):
+    (rc, Stdout, ErrorList) = RunSqlplus(Sql, True, ConnStr)
+  else:
+    (rc, Stdout, ErrorList) = RunSqlplus(Sql, True)
+
+  if (rc == True) :
+    PrintError(Sql, Stdout, ErrorList)
+    exit(1)
+
+  if (Stdout.strip() == '1') :
+    return(True)
+  else:
+    return(False)
+# ---------------------------------------------------------------------------
+# End TablespaceExists()
+# ---------------------------------------------------------------------------
+
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  Cmd              = basename(argv[0])
+  CmdDesc          = 'Tablespace Add (' + Cmd + ')'
+  Version          = '1.0'
+  VersionDate      = 'Tue Aug 10 15:24:44 CDT 2017'
+  DevState         = 'Test'
+  Banner           = CmdDesc + ': Release ' + Version + ' '  + DevState + '. Last updated: ' + VersionDate
+  Now              = datetime.now()
+  EtcDir           = '/home/oracle/dba/etc'
+  TmpDir           = '/home/oracle/dba/tmp'
+  LogDir           = '/home/oracle/dba/log'
+  Script           = pathjoin(TmpDir, Cmd + '.sql')
+  ThisYear         = str(datetime.now().strftime("%Y"))
+  ThisMonth        = str(datetime.now().strftime("%m"))
+  ThisDay          = str(datetime.now().strftime("%d"))
+  ThisQtr          = ''
+  ThisHY           = ''
+  SqlHeader        = '/***** ' + CmdDesc.upper() + ' *****/'
+  Colsep           = "~"
+  MainRc           = 0
+  ConnStr          = ''
+  LongMonths       = [1,3,5,7,8,10,12]
+  Q1               = [1,2,3]
+  Q2               = [4,5,6]
+  Q3               = [7,8,9]
+  Q4               = [10,11,12]
+  H1               = [1,2,3,4,5,6]
+  H2               = [7,8,9,10,11,12]
+  TbspDict         = {}
+  MthMask          = '{YYYYMM}'
+  QtrMask          = '{YYYYQ}'
+  SemiMask         = '{YYYYHY}'
+  AnnMask          = '{YYYY}'
+
+  # Monthly Tablespaces {YYYYMM}
+  # ----------------------------------      
+  TbspDict['PSSF_{YYYYMM}_TBLS']                = ''
+  TbspDict['QUICKSCREEN_{YYYYMM}_TBLS']         = ''
+  TbspDict['STMT_{YYYYMM}_TK_TBLS']             = ''
+  TbspDict['TDR_{YYYYMM}_TBLS']                 = ''
+  TbspDict['TRAN_{YYYYMM}_TK_TBLS']             = ''
+  TbspDict['WSTRAN_{YYYYMM}_TBLS']              = ''
+  TbspDict['NPF_{YYYYMM}_TBLS']                 = ''
+  TbspDict['GEN_APA_AAPL_HIST_{YYYYMM}_TBLS']   = ''
+  TbspDict['JCP_ACCOUNT_LOOKUP_FACT_{YYYYMM}']  = ''
+  TbspDict['JCP_ACCOUNT_LOOKUP_FACT_{YYYYMM}']  = ''
+  TbspDict['JCP_ADVD_PRM_FCT_{YYYYMM}_TBLS']    = ''
+  TbspDict['MTBF_{YYYYMM}_TBLS']                = ''
+  TbspDict['MTJ1F_{YYYYMM}_TBLS']               = ''
+  TbspDict['MTJ2F_{YYYYMM}_TBLS']               = ''
+  TbspDict['CSMF_{YYYYMM}_TKN_TBLS']            = ''
+  TbspDict['APFE_{YYYYMM}_TBLS']                = ''
+  TbspDict['APP_FRD_AUDIT_{YYYYMM}_TBLS']       = ''
+  TbspDict['APP_FRD_ERR_FACT_{YYYYMM}_TBLS']    = ''
+  TbspDict['APP_FRD_FACT_{YYYYMM}_TBLS']        = ''
+  TbspDict['APPF_{YYYYMM}_TBLS']                = ''
+  TbspDict['ASF_{YYYYMM}_TBLS']                 = ''
+  TbspDict['AUTH_{YYYYMM}_TBLS']                = ''
+  TbspDict['BONUSLF_{YYYYMM}_TKN_TBLS']         = ''
+  TbspDict['CCSF_TKN_{YYYYMM}_TBLS']            = ''
+  TbspDict['CCSF_{YYYYMM}_TBLS']                = ''
+
+  # Quarterly Tablespaces {YYYYQ}
+  # ----------------------------------
+  TbspDict['ACS_PDF_{YYYYQ}_TBLS']              = ''
+  TbspDict['AHD_{YYYYQ}_TKN_TBLS']              = ''
+  TbspDict['FRAUD_FF_{YYYYQ}_TBLS']             = ''
+
+  # Semiannual Tablespaces {YYYYHY}
+  # ----------------------------------
+  TbspDict['CD_FACT_{YYYYHY}_TBLS']             = ''
+  TbspDict['CONSACQ_AAN_MISC_{YYYYHY}_TBLS']    = ''
+  TbspDict['CONSACQ_AAN_RBP_{YYYYHY}_TBLS']     = ''
+  TbspDict['CONSCQ_AAN_RJ_CND_{YYYYHY}_TBLS']   = ''
+  TbspDict['NPF_{YYYYHY}_TBLS']                 = ''
+
+  # Annual Tablespaces {YYYYHY}
+  # ----------------------------------
+  TbspDict['EA_FACT_{YYYY}_TBLS']               = ''
+  TbspDict['OGAC_{YYYY}_TBLS']                  = ''
+
+
+  Usage  = '\n\nGenerate DDL for adding new tablespaces.\n'
+  Usage += '\n' + Cmd + ' [-p] [-e] [-v] [-h]'
+  Usage += '\n\nExample:'
+  Usage += '\n         ' + Cmd
+  Usage += '\n         ' + Cmd + ' -p 202103'
+  Usage += '\n         ' + Cmd + ' -e'
+  Usage += '\n         ' + Cmd + ' -h'
+  Usage += '\n         ' + Cmd + ' --v'
+  Usage += '\n         ' + Cmd + '\n\n*** Note: Be careful with the -e option. This may execute DDL immediately in the database.'
+  ArgParser = OptionParser(Usage)
+
+  # Process command line options
+  # ----------------------------------
+  ArgParser = OptionParser(Usage)
+  ArgParser.add_option("-e",  action="store_true", dest="Execute",      default=False,                          help="Execute DDL Generated")
+  ArgParser.add_option("-p",                       dest="Period",       default=ThisYear + ThisMonth, type=str, help="Period (YYYYMMDD or YYYYMM)")
+  ArgParser.add_option("-s",  action="store_true", dest="Silent",       default=False,                          help="Silent mode. No prompts.")
+  ArgParser.add_option("-v", action="store_true",  dest="Version",      default=False,                          help="Version Information")
+
+  Options, args = ArgParser.parse_args()
+  argc = len(args)
+
+  # Initalize Command Line Options
+  # ------------------------------------
+  Execute       = Options.Execute
+  Period        = Options.Period
+  ShowVer       = Options.Version
+  Silent        = Options.Silent
+
+  if (ShowVer):
+    print('\n%s' % Banner)
+    exit()
+
+  # Start logging - Everything from stdout will be logged from this point.
+  # -----------------------------------------------------------------------
+  LogTime = datetime.now().strftime("%Y%m%d.%H%M%S")
+  LogFile = pathjoin(LogDir, Cmd + '.' + LogTime + '.log')
+  try:
+    Log = open(LogFile, 'wb')
+    Log.close()
+  except:
+    print('\nUnable to to open log file for write: %s' % LogFile)
+    exit(1)
+  sys.stdout = Logger(LogFile)
+
+  # Parse Connect string (if any)
+  # -------------------------------
+  if (len(args) > 0):
+    InStr = args[0]
+    ConnStr = ParseConnectString(InStr)
+
+  # Setup ORACLE_SID
+  # -----------------
+  if (Execute == True and ConnStr == ''):
+    if ('ORACLE_SID' in environ):
+      OracleSid = environ['ORACLE_SID']
+    else:
+      if(version_info[0] >= 3):
+        OracleSid = input('\nEnter ORACLE_SID: ')
+      else:
+        OracleSid = raw_input('\nEnter ORACLE_SID: ')
+        if(OracleSid != ''):
+          environ['ORACLE_SID'] = OracleSid
+        else:
+          print('\nORACLE_SID is required')
+          print('\n  example:    export ORACLE_SID=MYDB')
+          exit(1)
+
+  # Validate Period
+  # ----------------
+
+  if (not Period.isdigit()):
+    print('\nPeriod must be a number in the form of YYYYMM.')
+    print('\n%s' % Usage)
+    exit(1)
+
+  if (len(Period) != 6) :
+    print('\nPeriod must be a valid date in the form of YYYYMM.')
+    print('\n%s' % Usage)
+    exit(1)
+
+  if ((int(str(Period)[4:6]) < 1) or (int(str(Period)[4:6]) > 12)) :
+    print('\n\nInvalid month value. Date must be in the form of YYYYMM.')
+    print('\n%s' % Usage)
+    exit(1)
+
+  if (int(str(Period)[0:4]) < 2017) :
+    print('\nPeriod must be a valid date in the form of YYYYMM) and YYYY >= 2017.')
+    print('\n%s' % Usage)
+    exit(1)
+
+  ThisYear  = str(Period)[0:4]
+  ThisMonth = str(Period)[4:6]
+
+  # Determine this quarter
+  # -----------------------
+  if (int(ThisMonth) in Q1):
+    ThisQtr = '1'
+  elif (int(ThisMonth) in Q2):
+    ThisQtr = '2'
+  elif (int(ThisMonth) in Q3):
+    ThisQtr = '3'
+  elif (int(ThisMonth) in Q4):
+    ThisQtr = '4'
+
+  # Determine this year half
+  # -------------------------
+  if (int(ThisMonth) in H1):
+    ThisHY = '1'
+  else:
+    ThisHY = '2'
+
+  # Replace the date mask in the tablespace names with the appropriate date string.
+  # ----------------------------------------------------------------------------------
+  for Tbsp in TbspDict:
+    if (Tbsp.find(MthMask) >= 0):
+      TbspDict[Tbsp] = (ThisYear + ThisMonth).join(Tbsp.split(MthMask)) 
+    elif (Tbsp.find(QtrMask) >= 0):
+      TbspDict[Tbsp] = (ThisYear + 'Q' + ThisQtr).join(Tbsp.split(QtrMask)) 
+    elif (Tbsp.find(SemiMask) >= 0):
+      TbspDict[Tbsp] = (ThisYear + 'HY' + ThisHY).join(Tbsp.split(SemiMask)) 
+    elif (Tbsp.find(AnnMask) >= 0):
+      TbspDict[Tbsp] = (ThisYear).join(Tbsp.split(AnnMask)) 
+    else:
+      TbspDict[Tbsp] = Tbsp
+
+  # Setup ORACLE_HOME
+  # -------------------
+  if ('ORACLE_HOME' in environ):
+    OracleHome = environ['ORACLE_HOME']
+  else:
+    if(version_info[0] >= 3):
+      OracleHome = input('\nEnter ORACLE_HOME: ')
+    else:
+      OracleHome = raw_input('\nEnter ORACLE_HOME: ')
+    if(OracleHome == ''):
+      print('\nORACLE_HOME is required.')
+      print('\n  example:    export ORACLE_HOME=/u01/app/oracle/product/11.2.0.3/dbhome_1')
+      exit(1)
+  OracleBin  = pathjoin(OracleHome, 'bin')
+
+  if (Execute == True):
+    # Make sure the tablespaces don't already exist
+    # -----------------------------------------------
+    for Tbsp in sorted(TbspDict):
+      Found = TablespaceExists(TbspDict[Tbsp])
+      if (Found == True) :
+        print('\nWARNING: Tablespace already exists.: %s' % TbspDict[Tbsp])
+        print('         Removing tablespace from list.')
+        del TbspDict[Tbsp]
+
+  if (TbspDict == {}):
+    print('\nNo Tablespaces to process...')
+    exit()
+
+  # Open the script file for write...
+  # ---------------------------------
+  try:
+    s = open(Script, 'w')
+  except:
+    print('\nCannot open script file for write: %s' % Script)
+    exit(1)
+
+  print('\n============================================================================================================================')
+  print('%s: Release %s Production, %28s %45s' % (CmdDesc, Version, VersionDate, Now.strftime("%Y-%m-%d %H:%M")))
+  print('============================================================================================================================')
+  print('')
+  print('This program generates DDL for creating new tablespaces for a given period.')
+  print('')
+  print('Global Settings')
+  print('----------------')
+  print(' Create Script                  : %s' % Script)
+  print(' Log File                       : %s' % LogFile)
+  try:
+    print(' Oracle SID                     : %s' % environ['ORACLE_SID'])
+  except:
+    pass
+  try:
+    print(' Oracle Home                    : %s' % environ['ORACLE_HOME'])
+  except:
+    pass
+  if(ConnStr != ''):
+    print(' ConnectString                  : %s' % ConnStr)
+  print(' Period                         : %s' % Period)
+
+  DDL = []
+  for Tbsp in sorted(TbspDict):
+    DDL.append("CREATE BIGFILE TABLESPACE %-30s DATAFILE '+DATA' SIZE 1344M AUTOEXTEND ON NEXT 1344M;" % TbspDict[Tbsp])
+
+  # Write the DDL to the script file...
+  # -------------------------------------
+  s.write('-----------------------------------------------------------------------------------------------------\n')
+  s.write('--- %s: Release %s, %28s %22s\n' % (CmdDesc, Version, VersionDate, Now.strftime("%Y-%m-%d %H:%M")))
+  s.write('-----------------------------------------------------------------------------------------------------\n')
+  s.write('--- Tablespaces: %s' % '\n---              '.join(sorted(TbspDict)) + '\n')
+  s.write('-----------------------------------------------------------------------------------------------------\n')
+  s.write('%s' % '\n\n'.join(DDL) + '\n')
+  s.write('-----------------------------------------------------------------------------------------------------\n')
+  s.close()
+
+  if (MainRc == 0):
+    # Add New Partitions / print DDL
+    # ----------------------------------
+    if (Execute == False):
+      print('\n---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---')
+      print('\n---\n'.join(DDL))
+      print('---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---cut---')
+    else:
+      for CrTbsp in DDL:
+        # Create The Tablespace
+        # ----------------------
+        if (ConnStr != ''):
+          (rc, Stdout, ErrorList) = RunSqlplus(CrTbsp, True, ConnStr)
+        else:
+          (rc, Stdout, ErrorList) = RunSqlplus(CrTbsp, True)
+
+        if(rc != 0):
+          MainRc += 1
+          print("\nError occured executing the following SQL:")
+          PrintError(CrTbsp, Stdout, ErrorList)
+
+  Now = datetime.now()
+  print('\n============================================================================================================================')
+  print('Process complete%108s' % Now.strftime("%Y-%m-%d %H:%M"))
+  print('============================================================================================================================')
+  exit(MainRc)
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------
+

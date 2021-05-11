@@ -1,0 +1,19 @@
+#!/bin/bash
+
+crsstat | grep svc | grep `hostname | cut -f1 -d.` | awk {' print $1 " " $5 '} |\
+while read LINE; do
+   DB=`echo $LINE   | cut -f2 -d.`
+   SVC=`echo $LINE  | cut -f3 -d.`
+   HOST=`echo $LINE | cut -f2 -d' '`
+   echo "srvctl stop service -d $DB -s $SVC -n $HOST"
+done
+
+
+crsstat | grep svc | grep `hostname | cut -f1 -d.` | awk {' print $1 " " $5 '} |\
+while read LINE; do
+   DB=`echo $LINE   | cut -f2 -d.`
+   SVC=`echo $LINE  | cut -f3 -d.`
+   HOST=`echo $LINE | cut -f2 -d' '`
+   echo "srvctl disable service -d $DB -s $SVC -n $HOST"
+done
+

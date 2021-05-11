@@ -1,0 +1,7 @@
+#!/bin/bash
+
+ps -ef | grep pmon | grep -v grep | grep -v perl | grep -v ASM | grep -v DBFS |\
+while read PMON; do
+   INST=`echo "$PMON" | awk {' print $8 '} | cut -f3 -d_`
+  echo $INST
+done

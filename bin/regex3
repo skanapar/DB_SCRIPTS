@@ -1,0 +1,36 @@
+#!/bin/env python
+
+from re import compile, search
+from sys import exit
+
+found = None
+data_pat = compile(r'(\S+) +(\d+) +(\d+) +(\d+) +(\d+\.\d+) +(\d+\.\d+) +(\d+) +(\d+) +(\S+) +(\S+) +(\D+ [0-9][0-9]|[0-9][0-9]:[0-9][0-9]:[0-9][0-9]) +([0-9][0-9]:[0-9][0-9]:[0-9][0-9]) +(.*$)')
+head_pat = compile(r'(\S+) +(\S+) +(\S+) +(\S+) +(\S+) +(\S+) +(\S+) +(\S+) +(\S+) +(\S+) +(\S+) +(\S+) +(\S+)')
+
+data = """USER       PID  PPID PRI %CPU %MEM    VSZ   RSS WCHAN  S  STARTED     TIME COMMAND
+oracle    7229  6493  19  0.6  0.1 11379352 338628 futex_ S   Nov 27 00:09:47 /u01/app/oem_agent/agent_13.3.0.0.0/oracle_common/jdk/bin/java -Xmx133M -XX:MaxPermSize=160M -server -Djava.security.egd=file:///dev/./urandom -Dsun.lang.ClassLoader.allowArraySyntax=true -XX:-UseLargePages -XX:+UseLinuxPosixThreadCPUClocks -XX:+UseConcMarkSweepGC -XX:+CMSClassUnloadingEnabled -XX:+UseCompressedOops -Dwatchdog.pid=6493 -cp /u01/app/oem_agent/agent_13.3.0.0.0/jdbc/lib/ojdbc7.jar:/u01/app/oem_agent/agent_13.3.0.0.0/ucp/lib/ucp.jar:/u01/app/oem_agent/agent_13.3.0.0.0/oracle_common/modules/jsch-0.1.53.jar:/u01/app/oem_agent/agent_13.3.0.0.0/oracle_common/modules/com.oracle.http_client.http_client_12.1.3.jar:/u01/app/oem_agent/agent_13.3.0.0.0/oracle_common/modules/oracle.xdk_12.1.3/xmlparserv2.jar:/u01/app/oem_agent/agent_13.3.0.0.0/oracle_common/modules/oracle.dms_12.1.3/dms.jar:/u01/app/oem_agent/agent_13.3.0.0.0/oracle_common/modules/oracle.odl_12.1.3/ojdl.jar:/u01/app/oem_agent/agent_13.3.0.0.0/oracle_common/modules/oracle.odl_12.1.3/ojdl2.jar:/u01/app/oem_agent/agent_13.3.0.0.0/lib/optic.jar:/u01/app/oem_agent/agent_13.3.0.0.0/sysman/jlib/log4j-core.jar:/u01/app/oem_agent/agent_13.3.0.0.0/jlib/gcagent_core.jar:/u01/app/oem_agent/agent_13.3.0.0.0/sysman/jlib/emagentSDK-intg.jar:/u01/app/oem_agent/agent_13.3.0.0.0/sysman/jlib/emagentSDK.jar oracle.sysman.gcagent.tmmain.TMMain
+root     58761  5826  19  0.0  0.0 104664  4832 unix_s S 12:44:36 00:00:00 sshd: ispadm [priv]"""
+
+for line in data.split('\n'):
+  data_found = data_pat.search(line)
+  head_found = head_pat.search(line)
+
+  if (head_found):
+    s = head_found.start()
+    e = head_found.end()
+    
+    print('')
+    print('    Found: %s'    % (head_found.re.pattern))
+    print('       in: %s'    % (head_found.string))
+    print(' Position: %d-%d' % (s,e))
+    print('    Group: %s'     % str(head_found.groups()))
+
+  if (data_found):
+    s = data_found.start()
+    e = data_found.end()
+
+    print('')
+    print('    Found: %s'    % (data_found.re.pattern))
+    print('       in: %s'    % (data_found.string))
+    print(' Position: %d-%d' % (s,e))
+    print('    Group: %s'     % str(data_found.groups()))

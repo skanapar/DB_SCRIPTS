@@ -1,0 +1,2 @@
+select * from admin.DB_AUDITED_DDL_OPERATIONS where TRUNCATED_DDL like '%THIRD_PARTY_GIFT%'
+/

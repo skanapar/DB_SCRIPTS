@@ -1,0 +1,90 @@
+#!/bin/bash
+# ===================================================================================================
+# Generate Restore Script                Development - Release 1.01                  2015-08-09 20:52
+# ===================================================================================================
+# Number of Channels per share : 1   
+# Number of Mount Points       : 8   
+# Number of Instances          : 6   
+# Service Name prefix          : TPBP           
+# Service Name postfix         : X29U           
+# Script File Name             : restore_database                                  
+# ===================================================================================================
+
+rman log=restore_database_$$.log<<EOF
+connect target /
+run {
+  sql 'alter system set "_backup_disk_bufcnt"  =      64 scope=memory';
+  sql 'alter system set "_backup_disk_bufsz"   = 1048576 scope=memory';
+  sql 'alter system set "_backup_file_bufcnt"  =      64 scope=memory';
+  sql 'alter system set "_backup_file_bufsz"   = 1048576 scope=memory';
+
+  set newname for database to '+DATA_X29U';
+  allocate channel TPBP1_SHARE1_1    DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP1_X29U';
+  allocate channel TPBP2_SHARE1_2    DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP2_X29U';
+  allocate channel TPBP3_SHARE1_3    DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP3_X29U';
+  allocate channel TPBP4_SHARE1_4    DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP4_X29U';
+  allocate channel TPBP5_SHARE1_5    DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP5_X29U';
+  allocate channel TPBP6_SHARE1_6    DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP6_X29U';
+
+  allocate channel TPBP1_SHARE2_7    DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP1_X29U';
+  allocate channel TPBP2_SHARE2_8    DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP2_X29U';
+  allocate channel TPBP3_SHARE2_9    DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP3_X29U';
+  allocate channel TPBP4_SHARE2_10   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP4_X29U';
+  allocate channel TPBP5_SHARE2_11   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP5_X29U';
+  allocate channel TPBP6_SHARE2_12   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP6_X29U';
+
+  allocate channel TPBP1_SHARE3_13   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP1_X29U';
+  allocate channel TPBP2_SHARE3_14   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP2_X29U';
+  allocate channel TPBP3_SHARE3_15   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP3_X29U';
+  allocate channel TPBP4_SHARE3_16   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP4_X29U';
+  allocate channel TPBP5_SHARE3_17   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP5_X29U';
+  allocate channel TPBP6_SHARE3_18   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP6_X29U';
+
+  allocate channel TPBP1_SHARE4_19   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP1_X29U';
+  allocate channel TPBP2_SHARE4_20   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP2_X29U';
+  allocate channel TPBP3_SHARE4_21   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP3_X29U';
+  allocate channel TPBP4_SHARE4_22   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP4_X29U';
+  allocate channel TPBP5_SHARE4_23   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP5_X29U';
+  allocate channel TPBP6_SHARE4_24   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP6_X29U';
+
+  allocate channel TPBP1_SHARE5_25   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP1_X29U';
+  allocate channel TPBP2_SHARE5_26   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP2_X29U';
+  allocate channel TPBP3_SHARE5_27   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP3_X29U';
+  allocate channel TPBP4_SHARE5_28   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP4_X29U';
+  allocate channel TPBP5_SHARE5_29   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP5_X29U';
+  allocate channel TPBP6_SHARE5_30   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP6_X29U';
+
+  allocate channel TPBP1_SHARE6_31   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP1_X29U';
+  allocate channel TPBP2_SHARE6_32   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP2_X29U';
+  allocate channel TPBP3_SHARE6_33   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP3_X29U';
+  allocate channel TPBP4_SHARE6_34   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP4_X29U';
+  allocate channel TPBP5_SHARE6_35   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP5_X29U';
+  allocate channel TPBP6_SHARE6_36   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP6_X29U';
+
+  allocate channel TPBP1_SHARE7_37   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP1_X29U';
+  allocate channel TPBP2_SHARE7_38   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP2_X29U';
+  allocate channel TPBP3_SHARE7_39   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP3_X29U';
+  allocate channel TPBP4_SHARE7_40   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP4_X29U';
+  allocate channel TPBP5_SHARE7_41   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP5_X29U';
+  allocate channel TPBP6_SHARE7_42   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP6_X29U';
+
+  allocate channel TPBP1_SHARE8_43   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP1_X29U';
+  allocate channel TPBP2_SHARE8_44   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP2_X29U';
+  allocate channel TPBP3_SHARE8_45   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP3_X29U';
+  allocate channel TPBP4_SHARE8_46   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP4_X29U';
+  allocate channel TPBP5_SHARE8_47   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP5_X29U';
+  allocate channel TPBP6_SHARE8_48   DEVICE TYPE DISK CONNECT 'sys/Lexus2014@TPBP6_X29U';
+
+  # -----------------------------------------------------------------------------------------
+  # Uncomment and configure the restore/recover command(s) below as needed for your restore.
+  # -----------------------------------------------------------------------------------------
+  ### restore database until scn 10862830369582;
+  ### restore database until sequence 285487 thread 3;
+  ### restore database until time "TO_DATE('20140801232011','YYYYMMDDHH24MISS')";
+
+  ### recover database until scn 10862830369582;
+  ### recover database until sequence 285487 thread 3;
+  ### recover database until time "TO_DATE('20140801232011','YYYYMMDDHH24MISS')";
+}
+EOF
+

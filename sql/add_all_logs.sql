@@ -1,0 +1,25 @@
+define SID=&1
+--Alter database add logfile group 1 ('/redo-01-a/databases/&&SID/redo-t01-g01-m2.log','/redo-03-a/databases/&&SID/redo-t01-g01-m2.log') size  128M;
+--Alter database add logfile group 2 ('/redo-02-a/databases/&&SID/redo-t01-g02-m2.log','/redo-04-a/databases/&&SID/redo-t01-g02-m2.log') size  128M;
+--Alter database add logfile group 3 ('/redo-03-a/databases/&&SID/redo-t01-g03-m2.log','/redo-01-a/databases/&&SID/redo-t01-g03-m2.log') size  128M;
+--Alter database add logfile group 4 ('/redo-04-a/databases/&&SID/redo-t01-g04-m2.log','/redo-02-a/databases/&&SID/redo-t01-g04-m2.log') size  128M;
+Alter database add logfile group 5 ('/redo-01-a/databases/&&SID/redo-t01-g05-m2.log','/redo-03-a/databases/&&SID/redo-t01-g05-m2.log') size  128M;
+Alter database add logfile group 6 ('/redo-02-a/databases/&&SID/redo-t01-g06-m2.log','/redo-04-a/databases/&&SID/redo-t01-g06-m2.log') size  128M;
+Alter database add logfile group 7 ('/redo-03-a/databases/&&SID/redo-t01-g07-m2.log','/redo-01-a/databases/&&SID/redo-t01-g07-m2.log') size  128M;
+Alter database add logfile group 8 ('/redo-04-a/databases/&&SID/redo-t01-g08-m2.log','/redo-02-a/databases/&&SID/redo-t01-g08-m2.log') size  128M;
+Alter database add logfile group 9 ('/redo-01-a/databases/&&SID/redo-t01-g09-m2.log','/redo-03-a/databases/&&SID/redo-t01-g09-m2.log') size  128M;
+Alter database add logfile group 10 ('/redo-02-a/databases/&&SID/redo-t01-g10-m2.log','/redo-04-a/databases/&&SID/redo-t01-g10-m2.log') size  128M;
+Alter database add logfile group 11 ('/redo-03-a/databases/&&SID/redo-t01-g11-m2.log','/redo-01-a/databases/&&SID/redo-t01-g11-m2.log') size  128M;
+Alter database add logfile group 12 ('/redo-04-a/databases/&&SID/redo-t01-g12-m2.log','/redo-02-a/databases/&&SID/redo-t01-g12-m2.log') size  128M;
+Alter database add standby logfile '/redo-01-a/databases/&&SID/stby-t01-g20-m1.log' size  128M;
+Alter database add standby logfile '/redo-02-a/databases/&&SID/stby-t01-g21-m1.log' size  128M;
+Alter database add standby logfile '/redo-03-a/databases/&&SID/stby-t01-g22-m1.log' size  128M;
+Alter database add standby logfile '/redo-04-a/databases/&&SID/stby-t01-g23-m1.log' size  128M;
+Alter database add standby logfile '/redo-01-a/databases/&&SID/stby-t01-g24-m1.log' size  128M;
+Alter database add standby logfile '/redo-02-a/databases/&&SID/stby-t01-g25-m1.log' size  128M;
+Alter database add standby logfile '/redo-03-a/databases/&&SID/stby-t01-g26-m1.log' size  128M;
+Alter database add standby logfile '/redo-04-a/databases/&&SID/stby-t01-g27-m1.log' size  128M;
+Alter database add standby logfile '/redo-01-a/databases/&&SID/stby-t01-g28-m1.log' size  128M;
+Alter database add standby logfile '/redo-02-a/databases/&&SID/stby-t01-g29-m1.log' size  128M;
+Alter database add standby logfile '/redo-03-a/databases/&&SID/stby-t01-g30-m1.log' size  128M;
+Alter database add standby logfile '/redo-04-a/databases/&&SID/stby-t01-g31-m1.log' size  128M;

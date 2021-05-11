@@ -1,0 +1,66 @@
+#!/bin/bash
+
+export SID=$1
+export user=$2
+export passwd=$3
+export sessions=$4
+
+create_tables() {
+  sqlplus -s /nolog<<EOF
+  connect ${user}/${passwd}@${SID}
+  drop table mytab3;
+  create table mytab3 nologging as select * from dba_objects;
+  insert /*+ APPEND */ into mytab3 (select * from mytab3);
+  commit;
+  insert /*+ APPEND */ into mytab3 (select * from mytab3);
+  commit;
+  insert /*+ APPEND */ into mytab3 (select * from mytab3);
+  commit;
+  insert /*+ APPEND */ into mytab3 (select * from mytab3);
+  commit;
+  insert /*+ APPEND */ into mytab3 (select * from mytab3);
+  commit;
+  insert /*+ APPEND */ into mytab3 (select * from mytab3);
+  commit;
+  insert /*+ APPEND */ into mytab3 (select * from mytab3);
+  commit;
+  insert /*+ APPEND */ into mytab3 (select * from mytab3);
+  commit;
+  insert /*+ APPEND */ into mytab3 (select * from mytab3);
+  commit;
+  insert /*+ APPEND */ into mytab3 (select * from mytab3);
+  commit;
+  insert /*+ APPEND */ into mytab3 (select * from mytab3);
+  commit;
+  insert /*+ APPEND */ into mytab3 (select * from mytab3);
+  commit;
+
+  drop table mytab4;
+  create table mytab4 nologging as select * from mytab3;
+  EXIT
+EOF
+}
+
+burn_io1() {
+  sqlplus -s /nolog<<EOF
+  connect ${user}/${passwd}@${SID}
+
+  select a.object_id, a.object_name, a.object_type
+  from mytab3 a, 
+       mytab4 b;
+
+  EXIT
+EOF
+}
+
+JOBS=0
+#create_tables
+while :; do
+   burn_io1 > /dev/null &
+   JOBS=`jobs | wc -l`
+   while [ "$JOBS" -ge "$sessions" ]; do
+      sleep 5
+      JOBS=`jobs | wc -l`
+   done
+done
+

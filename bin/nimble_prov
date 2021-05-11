@@ -1,0 +1,104 @@
+#!/usr/bin/python
+
+import sys
+from six.moves import configparser
+
+from pprint import pprint
+from nimbleapi.nimbleapi import nimbleapi
+
+
+config = configparser.ConfigParser()
+config.read('test.env')
+nimble_host = config.get('NIMBLEAPI','NIMBLE_HOST')
+nimble_username = config.get('NIMBLEAPI','NIMBLE_USERNAME')
+nimble_password = config.get('NIMBLEAPI','NIMBLE_PASSWORD')
+data_perf_policy = config.get('NIMBLEAPI','DATA_PERF_POLICY')
+log_perf_policy = config.get('NIMBLEAPI','LOG_PERF_POLICY')
+data_perf_block_size = config.get('NIMBLEAPI','DATA_PERF_BLOCK_SIZE')
+log_perf_block_size = config.get('NIMBLEAPI','LOG_PERF_BLOCK_SIZE')
+data_volume_size = config.get('NIMBLEAPI','DATA_VOLUME_SIZE')
+log_volume_size = config.get('NIMBLEAPI','LOG_VOLUME_SIZE')
+data_lun_volume = config.get('NIMBLEAPI','DATA_LUN_VOL')
+log_lun_volume = config.get('NIMBLEAPI','LOG_LUN_VOL')
+volume_collection_name = config.get('NIMBLEAPI','VOL_COLLECTION_NAME')
+
+# INITIATE CONNECTION TO NIMBLE ARRAY
+nimble = nimbleapi(hostname = nimble_host, username = nimble_username, password = nimble_password)
+
+# TEST READ FUNCTIONS ON ALL DATA FROM THE NIMBLE
+nimble.access_control_records_read()
+#nimble.arrays_read()
+#nimble.audit_log_read()
+nimble.initiator_group_read()
+nimble.initiator_read()
+nimble.performance_policies_read()
+#nimble.pools_read()
+nimble.protection_schedules_read()
+#nimble.protection_templates_read()
+#nimble.replication_partners_read()
+#nimble.snapshot_collections_read()
+# nimble.snapshots_read() # TAKES A BIT OF TIME DEPENDING ON YOUR VOLUME/SNAPSHOT COUNT
+nimble.volume_collections_read()
+nimble.volume_read()
+
+##################################################################
+
+# CREATE INITIATOR GROUP
+#nimble.initiator_group_create(initiator_group_name = 'AutomationTestGroup-408')
+
+# ADD INITIATORS TO INITIATOR GROUP
+#nimble.initiator_create(initiator_group_name = 'AutomationTestGroup-408', alias = 'a1epc8lhan408_hba1_p1', wwpn = '51:40:2e:c0:11:09:63:58')
+#nimble.initiator_create(initiator_group_name = 'AutomationTestGroup-408', alias = 'a1epc8lhan408_hba1_p2', wwpn = '51:40:2e:c0:11:09:63:5a')
+#nimble.initiator_create(initiator_group_name = 'AutomationTestGroup-408', alias = 'a1epc8lhan408_hba2_p1', wwpn = '51:40:2e:c0:11:09:62:c8')
+#nimble.initiator_create(initiator_group_name = 'AutomationTestGroup-408', alias = 'a1epc8lhan408_hba2_p2', wwpn = '51:40:2e:c0:11:09:62:ca')
+
+# CREATE PERFORMANCE POLICY
+#nimble.performance_policies_create(name = 'DL580-rhev1', description = 'DL580-prrhev01', block_size = 16384, compress = True, cache = True, cache_policy = 'normal', space_policy = 'offline')
+
+
+# CREATE BOOT VOLUME
+#nimble.volume_create(volume_name = 'TestNimbleVolume-boot-automation', volume_size = 102400)
+
+# ADD INITIATOR GROUP AS LUN-ID 0 (BOOT)
+#nimble.access_control_records_create(volume_name = 'TestDLNimbleVolume-boot', initiator_group_name = 'TestNimbleInitiatorGroup', boot_volume = True)
+
+# PERFORMANCE POLICY for DATA
+nimble.performance_policies_create(name = data_perf_policy, description = 'Data4k-automation', block_size = data_perf_block_size, compress = True, cache = True, cache_policy = 'normal', space_policy = 'offline')
+
+# PERFORMANCE POLICY for Log
+nimble.performance_policies_create(name = log_perf_policy, description = 'Log32k-automation', block_size = log_perf_block_size, compress = True, cache = True, cache_policy = 'normal', space_policy = 'offline')
+
+# This is Data LUN (2 TB)   
+nimble.volume_create(volume_name = data_lun_volume, volume_size = data_volume_size, performance_policy_name = 'Data4k-automation')
+
+# This is Log LUN (1 TB) 
+nimble.volume_create(volume_name = log_lun_volume, volume_size = log_volume_size, performance_policy_name = 'Log32k-automation')
+
+# ADD INITIATOR GROUP; LUN-ID IS AUTO INCREMENTED STARTING AT 1
+nimble.access_control_records_create(volume_name = data_lun_volume, initiator_group_name = 'a1epc8lhan408')
+
+# ADD INITIATOR GROUP; LUN-ID IS AUTO INCREMENTED STARTING AT 1
+nimble.access_control_records_create(volume_name = log_lun_volume, initiator_group_name = 'a1epc8lhan408')
+
+# CREATE VOLUME COLLECTION
+new_volume_collection_id = nimble.volume_collections_create(name = volume_collection_name, description = 'automation generated volume collection')
+
+# ADD OUR DATASTORE VOLUME TO THE DATA VOLUME COLLECTION
+nimble.volume_update(data_lun_volume, volcoll_id = new_volume_collection_id)
+
+# ADD OUR DATASTORE VOLUME TO THE LOG VOLUME COLLECTION
+
+nimble.volume_update(log_lun_volume, volcoll_id = new_volume_collection_id)
+
+# SETUP HOURLY REPLICATION OF THE DATASTORE
+#nimble.protection_schedules_create(name = '4-hourly-replication-automation', description = '4-hourly-replication-automation', volcoll_or_prottmpl_id = new_volume_collection_id, period = 4, period_unit = 'hours', num_retain = 42)
+
+
+
+
+
+
+
+   
+    
+  

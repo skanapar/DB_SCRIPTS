@@ -1,0 +1,120 @@
+#!/bin/env python
+
+##################################################################################################
+#  Name:        rman_volume                                                                      #
+#  Author:      Randy Johnson                                                                    #
+#  Description: Report volume of all backupsets.                                                 #
+#                                                                                                #
+#  usage: rman_volume [options]                                                                  #
+#                                                                                                #
+#  options:                                                                                      #
+#    -h, --help  show this help message and exit                                                 #
+#    -s          print SQL query.                                                                #
+#    -v          print version info.                                                             #
+#                                                                                                #
+# History:                                                                                       #
+#                                                                                                #
+# Date       Ver. Who              Change Description                                            #
+# ---------- ---- ---------------- ------------------------------------------------------------- #
+# 07/02/2014 1.00 Randy Johnson    Initial write.                                                #
+##################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+from optparse   import OptionParser
+from os         import environ
+from os.path    import basename
+from signal     import signal
+from signal     import SIGPIPE
+from signal     import SIG_DFL
+from sys        import argv
+from sys        import exit
+from sys        import version_info
+from Oracle     import RunSqlplus
+from Oracle     import SetOracleEnv
+
+# For handling termination in stdout pipe, ex: when you run: oerrdump | head
+signal(SIGPIPE, SIG_DFL)
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  Cmd            = basename(argv[0])
+  CmdPrefix      = Cmd.split('.')[0]
+  CmdDesc        = 'Rman Controlfiles Report'
+  Version        = '1.00'
+  Sql            = ''
+  ErrChk         = False
+  ArgParser      = OptionParser()
+
+  # Check/set the Oracle environment
+  if ('ORACLE_SID' in list(environ.keys())):
+    (OracleSid, OracleHome) = SetOracleEnv(environ['ORACLE_SID'])
+  else:
+    if (version_info[0] >= 3):
+      Sid = input('\nEnter the ORACLE_SID of the database you want to search: ')
+    else:
+      Sid = raw_input('\nEnter the ORACLE_SID of the database you want to search: ')
+    (OracleSid, OracleHome) = SetOracleEnv(Sid)
+
+  ArgParser.add_option("-l",  dest="Lines",   default='0',                        type=str, help="limit output to nnn rows (default 0=off)")
+  ArgParser.add_option("--s", dest="Show",    default=False, action="store_true",           help="print SQL query.")
+  ArgParser.add_option("--v", dest="Version", default=False, action="store_true",           help="print version info.")
+
+  Options, args = ArgParser.parse_args()
+  argc = len(args)
+
+  if (Options.Version):
+    Banner = CmdDesc + ', Release ' + Version + ' Production, ' + VersionDate
+    print('\n', Banner)
+    exit()
+
+  Lines   = Options.Lines
+  Show    = Options.Show
+
+  # Check/set the Oracle environment
+  if (not('ORACLE_SID' in list(environ.keys()))):
+    print('Set your ORACLE_SID to the database you want to search.')
+    exit(1)
+  else:
+    # Set the ORACLE_HOME just in case it isn't set already.
+    if (not('ORACLE_HOME' in list(environ.keys()))):
+      (OracleSid, OracleHome) = SetOracleEnv(environ['ORACLE_SID'])
+
+  Sql += "connect rman/rman@RCAT\n"
+  Sql += "column handle   format a40            heading 'File Name'\n"
+  Sql += "column name     format a20            heading 'Name'\n"
+  Sql += "column dbid     format a10            heading 'Db ID'\n"
+  Sql += "column status   format a6             heading 'Status'\n" 
+  Sql += "column gbytes   format 999,999,999.9  heading 'Size (GB)'\n"
+  Sql += "select db.name\n"
+  Sql += "     , to_char(pc.db_id) dbid\n"
+  Sql += "     , pc.status\n"
+  Sql += "     , sum(pc.bytes)/1024/1024 gbytes\n"
+  Sql += "  from RC_BACKUP_PIECE pc\n"
+  Sql += "     , RC_DATABASE db\n"
+  Sql += " where db.dbid = pc.db_id\n"
+  Sql += "   and db.db_key = pc.db_key\n"
+  Sql += "   and pc.status != 'X'\n"
+  Sql += " group by db.name, pc.db_id, status\n"
+  Sql += "order by db.name, pc.db_id, pc.status, gbytes;\n"
+  if (Show):
+    print('-----------cut-----------cut-----------cut-----------cut-----------cut-----------')
+    print(Sql)
+    print('-----------cut-----------cut-----------cut-----------cut-----------cut-----------')
+    exit()
+
+  # Execute the report
+  (Stdout) = RunSqlplus(Sql, ErrChk)
+  
+  # Print the report
+  if (Stdout != ''):
+    print('')
+    print(Stdout)
+
+  exit(0)
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------

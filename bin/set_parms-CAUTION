@@ -1,0 +1,37 @@
+#!/bin/bash
+
+ps -ef | grep pmon | grep -v grep | grep -v perl | grep -v ASM | grep -v DBFS |\
+while read PMON; do
+   INST=`echo "$PMON" | awk {' print $8 '} | cut -f3 -d_`
+  echo $INST
+
+  MAIN_ENV=~/.env/main.env
+  if [ -r $MAIN_ENV ]; then
+     . $MAIN_ENV $INST
+  else
+     echo 'Could not open $MAIN_ENV for read.'
+  fi
+
+  sqlplus -s /nolog <<-EOF
+  connect / as sysdba
+  alter system reset parallel_force_local     scope=both   sid='*';  
+  alter system reset parallel_max_servers     scope=both   sid='*';    
+  alter system reset parallel_min_servers     scope=both   sid='*';     
+  alter system reset parallel_servers_target  scope=both   sid='*'; 
+  alter system reset large_pool_size          scope=spfile sid='*';
+
+  alter system reset parallel_force_local     scope=both   sid='$INST';  
+  alter system reset parallel_max_servers     scope=both   sid='$INST';    
+  alter system reset parallel_min_servers     scope=both   sid='$INST';     
+  alter system reset parallel_servers_target  scope=both   sid='$INST'; 
+  alter system reset large_pool_size          scope=spfile sid='$INST';
+
+  alter system set parallel_force_local=TRUE  scope=both   sid='*';  
+  alter system set parallel_max_servers=20    scope=both   sid='*';    
+  alter system set parallel_min_servers=8     scope=both   sid='*';     
+  alter system set parallel_servers_target=20 scope=both   sid='*'; 
+  alter system set large_pool_size=200M       scope=spfile sid='*';
+EOF
+
+done
+

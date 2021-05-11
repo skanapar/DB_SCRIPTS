@@ -1,0 +1,11 @@
+try:
+  import xml.etree.cElementTree as ET
+except ImportError:
+  import xml.etree.ElementTree as ET
+
+tree = ET.ElementTree(file='comps.xml')
+
+root = tree.getroot()
+
+for child in root:
+  print child.tag, root.attrib

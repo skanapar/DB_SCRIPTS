@@ -1,0 +1,155 @@
+#!/bin/env python
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+from optparse     import OptionParser
+from os           import environ
+from os.path      import basename
+from sys          import argv
+from sys          import exit
+from sys          import version_info
+from signal       import SIGPIPE
+from signal       import SIG_DFL
+from signal       import signal
+from Oracle       import ErrorCheck
+from Oracle       import RunSqlplus
+from Oracle       import SetOracleEnv
+from Oracle       import ParseConnectString
+from Oracle       import FormatNumber
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  Cmd            = basename(argv[0]).split('.')[0]
+  CmdDesc        = 'FDNY Reload'
+  Version        = '4.00'
+  VersionDate    = 'Tue Dec 19 19:06:16 CST 2017'
+  DevState       = 'Production'
+  Banner         = CmdDesc + ': Release ' + Version + ' '  + DevState + '. Last updated: ' + VersionDate
+  Sql            = ''
+  SqlHeader      = '/***** ' + CmdDesc.upper() + ' *****/'
+  ErrChk         = False
+  ArgParser      = OptionParser()
+  InStr          = ''
+  ConnStr        = ''
+  Colsep         = "'~'"
+
+  # For handling termination in stdout pipe; ex: when you run: oerrdump | head
+  signal(SIGPIPE, SIG_DFL)
+
+  ArgParser.add_option('--s', dest='Show',    action='store_true', default=False, help="print SQL query.")
+  ArgParser.add_option('--v', dest='ShowVer', action='store_true', default=False, help="print version info.")
+
+  # Parse command line arguments
+  Options, args = ArgParser.parse_args()
+
+  Show       = Options.Show
+  ShowVer    = Options.ShowVer
+
+  if (ShowVer == True):
+    print('\n%s' % Banner)
+    exit()
+
+  SqlHeader  = "set lines 2000\n"
+  SqlHeader += "set timing off\n"
+  SqlHeader += "set time off\n"
+  SqlHeader += "set feedback off\n"
+  SqlHeader += "set echo off\n"
+  SqlHeader += "set pages 0\n"
+  
+  SqlDict = {}
+  SqlDict['TBS'] = "select 'insert into fdny.tbs (APPNAME, DBNAME, ENV, TBSNAME, TYPE, MBYTES) ~' || appname || '~' || dbname || '~' || env || '~' || tbsname   || '~' || type   || '~' || mbytes || '~);' from fdny.tbs;\n" 
+  SqlDict['MEM'] = "select 'insert into fdny.mem (APPNAME, DBNAME, ENV, POOL, MBYTES)          ~' || appname || '~' || dbname || '~' || env || '~' || pool      || '~' || mbytes || '~);' from fdny.mem;\n"                  
+  SqlDict['CTL'] = "select 'insert into fdny.ctl (APPNAME, DBNAME, ENV, MEMBERS, MBYTES)       ~' || appname || '~' || dbname || '~' || env || '~' || members   || '~' || mbytes || '~);' from fdny.ctl;\n"                  
+  SqlDict['RDO'] = "select 'insert into fdny.rdo (APPNAME, DBNAME, ENV, MEMBERS, MBYTES)       ~' || appname || '~' || dbname || '~' || env || '~' || members   || '~' || mbytes || '~);' from fdny.rdo;\n"                  
+  SqlDict['ARC'] = "select 'insert into fdny.arc (APPNAME, DBNAME, ENV, RETENTION, MBYTES)     ~' || appname || '~' || dbname || '~' || env || '~' || retention || '~' || mbytes || '~);' from fdny.arc;\n"                  
+  
+  # Check/setup the Oracle environment
+  if (not('ORACLE_SID' in list(environ.keys()))):
+    print('ORACLE_SID is required.')
+    exit(1)
+  else:
+    # Set the ORACLE_HOME just in case it isn't set already.
+    if (not('ORACLE_HOME' in list(environ.keys()))):
+      (OracleSid, OracleHome) = SetOracleEnv(environ['ORACLE_SID'])
+
+  # Parse the connect string if any, prompt for username, password if needed.
+  if (len(args) > 0 and Show == False):
+    InStr = args[0]
+    ConnStr = ParseConnectString(InStr)
+
+  for key in SqlDict:
+    Sql = SqlHeader + SqlDict[key]
+    print('\n-- Load the %s Table' % key)
+  
+    # Execute the report
+    if (ConnStr != ''):
+      (Stdout) = RunSqlplus(Sql, ErrChk, ConnStr)
+    else:
+      (Stdout) = RunSqlplus(Sql, ErrChk)
+    
+    Stdout = Stdout.strip()
+    ComponentList = ['sqlplus','rdbms', 'oracore']
+    (rc, ErrorList) = ErrorCheck(Stdout, ComponentList)
+    
+    if (rc != 0):
+      print(Stdout)
+      exit(rc)
+    else:
+      for line in sorted(Stdout.split('\n')):
+        line = line.split('~')
+        fld1 = line[0]
+        if (key =='TBS'):
+          fld1 += ' values ('
+          fld2 = "'" + line[1] + "',"
+          fld3 = "'" + line[2] + "',"
+          fld4 = "'" + line[3] + "',"
+          fld5 = "'" + line[4] + "',"
+          fld6 = "'" + line[5] + "',"
+          fld7 = line[6]
+          fld8 = line[7]
+          print("%s %-7s %-10s %-10s %-25s %-10s %-6s %s" % (fld1, fld2, fld3, fld4, fld5, fld6, fld7, fld8))
+        elif (key =='MEM'):
+          fld1 += ' values ('
+          fld2 = "'" + line[1] + "',"
+          fld3 = "'" + line[2] + "',"
+          fld4 = "'" + line[3] + "',"
+          fld5 = "'" + line[4] + "',"
+          fld6 = line[5]
+          fld7 = line[6]
+          print("%s %-7s %-10s %-10s %-25s %-5s %s" % (fld1, fld2, fld3, fld4, fld5, fld6, fld7))
+        if (key =='ARC'):
+          fld1 += ' values ('
+          fld2 = "'" + line[1] + "',"
+          fld3 = "'" + line[2] + "',"
+          fld4 = "'" + line[3] + "',"
+          fld5 = "'" + line[4] + "',"
+          fld6 = line[5]
+          fld7 = line[6]
+          print("%s %-7s %-10s %-10s %-13s %-8s %s" % (fld1, fld2, fld3, fld4, fld5, fld6, fld7))
+        if (key =='RDO'):
+          fld1 += ' values ('
+          fld2 = "'" + line[1] + "',"
+          fld3 = "'" + line[2] + "',"
+          fld4 = line[3] + ","
+          fld5 = line[4] + ","
+          fld6 = line[5]
+          fld7 = line[6]
+          print("%s %-7s %-10s %-10s %-4s %-4s %s" % (fld1, fld2, fld3, fld4, fld5, fld6, fld7))
+        if (key =='CTL'):
+          fld1 += ' values ('
+          fld2 = "'" + line[1] + "',"
+          fld3 = "'" + line[2] + "',"
+          fld4 = "'" + line[3] + "',"
+          fld5 = line[4] + ","
+          fld6 = line[5]
+          fld7 = line[6]
+          print("%s %-7s %-10s %-10s %-4s %-4s %s" % (fld1, fld2, fld3, fld4, fld5, fld6, fld7))
+        else:
+          pass
+
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------

@@ -1,0 +1,55 @@
+#!/bin/bash
+
+ps -ef | grep pmon | grep -v grep | grep -v perl | grep -v ASM | grep -v DBFS | grep -v dbm | sort |\
+while read PMON; do
+   INST=`echo "$PMON" | awk {' print $8 '} | cut -f3 -d_`
+
+  MAIN_ENV=~/.env/main.env
+  if [ -r $MAIN_ENV ]; then
+     . $MAIN_ENV $INST
+  else
+     echo 'Could not open $MAIN_ENV for read.'
+  fi
+
+  SQLOUT=`sqlplus -s /nolog <<-EOF
+  connect / as sysdba
+  set head off
+  set tab off
+  set trimspool on
+
+  set pages 0
+  set echo off
+  set feedback off
+  set lines 155
+  col name for a40
+  col value for a40
+
+  select '$INST'||':'||name||':'||value
+    from ( select name, value
+             from ( select i.ksppinm    name,
+                           sv.ksppstvl  value
+                      from sys.x\\$ksppi i,
+                           sys.x\\$ksppsv sv
+                     where i.indx = sv.indx ))
+   where name in ('pga_aggregate_target',
+                  'shared_pool_size',
+                  'db_cache_size',
+                  'java_pool_size',
+                  'large_pool_size',
+                  'sga_target',
+                  'sga_max_size',
+                  'memory_max_target',
+                  'memory_target')
+  order by name;
+EOF`
+
+  echo "$SQLOUT" |\
+  while read LINE; do
+    DBNAME=`echo "$LINE" | cut -d: -f1`
+    NAME=`echo   "$LINE" | cut -d: -f2`
+    VALUE=`echo  "$LINE" | cut -d: -f3`
+    printf "%-10s %-20s %+20s\n" $DBNAME $NAME $VALUE
+  done
+done
+
+

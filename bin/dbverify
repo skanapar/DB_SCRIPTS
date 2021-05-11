@@ -1,0 +1,22 @@
+#!/bin/bash
+
+USER=$1
+PASS=$2
+PARALLEL=$3
+INPUT_FILE=$4
+
+run_dbv() {
+  DATAFILE=$1
+  dbv userid=sys/SunF10wer blocksize=8192 file=\'$DATAFILE\' > 'dbverify_'`basename ${DATAFILE}`'.out' 2>&1
+}
+
+
+cat $INPUT_FILE |\
+while read DATAFILE; do                       
+  jobs | grep dbv | wc -l
+  while [ `jobs | wc -l` -gt $PARALLEL ]; do
+     sleep 5
+  done
+  run_dbv $DATAFILE &
+done
+

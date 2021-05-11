@@ -1,0 +1,1364 @@
+#!/bin/env python
+
+###################################################################################################
+# Name:         dgctl                                                                             #
+# Author:       Randy Johnson                                                                     #
+# Description:  Gathers dictionary stats.                                                         #
+# Dependencies:                                                                                   #
+#                                                                                                 #
+# Usage: dgctl [options] ../etc/dgctl.conf                                                        #
+#                                                                                                 #
+# Options:                                                                                        #
+#   -h, --help  show this help message and exit                                                   #
+#   --c         show configuration.                                                               #
+#   --v         show version info.                                                                #
+#                                                                                                 #
+# History:                                                                                        #
+#                                                                                                 #
+# Date       Ver. Who              Change Description                                             #
+# ---------- ---- ---------------- -------------------------------------------------------------- #
+# 02/16/2015 1.00 Randy Johnson    Initial release.                                               #
+#                                                                                                 #
+# Todo's                                                                                          #
+# Add error checking and validation to ExtractBrokerConfig (when configuration doesn't exist)     #
+# Investigate usefulness of debug mode: dgmgrl -debug -xml                                        #
+# Investigate usefulness of dbmsdrs.sql and dgb_display_config.sql approach                       #
+###################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+import sys
+import traceback
+from datetime     import datetime
+from os.path      import basename
+from os.path      import dirname
+from os.path      import join as pathjoin
+from os.path      import split as pathsplit
+from optparse     import OptionParser
+from sys          import argv
+from sys          import exit
+from os           import environ
+from re           import compile
+from re           import match
+from re           import search
+from re           import IGNORECASE
+from signal       import signal
+from signal       import SIGPIPE
+from signal       import SIG_DFL
+from sys          import version_info
+from subprocess   import Popen
+from subprocess   import PIPE
+from subprocess   import STDOUT
+from Oracle       import ChunkString
+from Oracle       import GetNodes
+from Oracle       import GetPassword
+from Oracle       import IsExecutable
+from Oracle       import IsReadable
+from Oracle       import Logger
+from Oracle       import ParseConnectString
+from Oracle       import PrintError
+from Oracle       import RunDgmgrl
+from Oracle       import RunSqlplus
+from Oracle       import SetOracleEnv
+
+if (version_info[0] >= 3):
+  import pickle
+  from configparser import SafeConfigParser
+  from base64       import b64decode  
+else:
+  import cPickle as pickle
+  from ConfigParser import SafeConfigParser
+
+# --------------------------------------
+# ---- Function Definitions ------------
+# --------------------------------------
+
+# ---------------------------------------------------------------------------
+# Def : DumpConfig()
+# Desc: Dumps the configuration file to stdout.
+# Args: <none>
+# Retn: <none>
+# ---------------------------------------------------------------------------
+def DumpConfig(ConfigFile):
+
+  if (IsReadable(ConfigFile)):
+    hConfigFile = open(ConfigFile, 'r')
+  else:
+    print('\nConfiguration file does not exist or is not readable: %s' % ConfigFile)
+    exit(1)
+
+  Contents = hConfigFile.read()
+  print('')
+  for line in Contents.split('\n'):
+    if (not line.strip().startswith('#')):
+      print(line)
+
+  return
+# ---------------------------------------------------------------------------
+# End DumpConfig()
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Def : ProcessConfigFile()
+# Desc: Loads dictionary structures with key/value pairs from the config file.
+# Args: ConfigFile = the name of the configuration file, example: mtk.conf
+# Retn: 1: string containing the Configuration Name
+#       2: dictionary containing configuration properties
+#       3: dictionary containing database properties
+#       4: dictionary containing instance properties
+# ---------------------------------------------------------------------------
+def ProcessConfigFile(ConfigFile):
+  PlanConfig     = SafeConfigParser()
+  ConfigDict     = {}
+  PlanDict       = {}
+  PlanConfigDict = {}
+  PlanDbDict     = {}
+  PlanInstDict   = {}
+  PlanConfigName = ''
+  Databases      = {}
+  DbName         = ''
+  DbList         = []
+  InstName       = ''
+  InstList       = []
+
+  # make the items in the config file case sensitive...
+  PlanConfig.optionxform = str
+
+  # Load the configuration file.
+  # -----------------------------
+  if (IsReadable(ConfigFile)):
+    PlanConfig.read(ConfigFile)
+  else:
+    print('\nConfiguration file does not exist or is not readable: %s' % ConfigFile)
+    exit(1)
+
+  if ('CONFIGURATION' not in PlanConfig.sections()):
+    print('Required [CONFIGURATION] secion not found in configuration file: %')
+    exit(1)
+
+  for Section in PlanConfig.sections():
+    for Option in sorted(PlanConfig.options(Section)):
+      for KeyVal in sorted(PlanConfig.items(Section, Option)):
+        key = KeyVal[0]
+        value = KeyVal[1]
+        if(Section not in PlanDict):
+          PlanDict[Section] = {}
+        PlanDict[Section][key] = value
+
+  # Populate PlanConfigDict
+  # ----------------------------------------------
+  if ('CONFIGURATION' not in PlanDict):
+    print("Required [CONFIGURATION] section not found in configuration file: %s" % ConfigFile)
+    exit(1)
+
+  if ('Name' not in PlanDict['CONFIGURATION']):
+    print("Required 'Name' property not found in ['CONFIGURATION'] section of configuration file: %s" % ConfigFile)
+    exit(1)
+
+  if ('Databases' not in PlanDict['CONFIGURATION']):
+    print("Required 'Databases' property not found in ['CONFIGURATION'] section of configuration file: %s" % ConfigFile)
+    exit(1)
+
+  PlanConfigName = PlanDict['CONFIGURATION']['Name']
+  PlanConfigDict = {}
+  ProtMode = ''
+  try:
+    PlanConfigDict['Protection Mode'] = ProtMode
+  except:
+    print("PlanConfigDict['Protection Mode'] not fund in configuration file: %s" % ConfigFile)
+    exit(1)
+    
+  try:
+    DbList = PlanDict['CONFIGURATION']['Databases'].split(',')
+  except:
+    print("PlanDict['CONFIGURATION']['Databases'] not fund in configuration file: %s" % ConfigFile)
+    exit(1)
+
+  for DbName in DbList:
+    try:
+      Role = PlanDict[DbName]['Role']
+    except:
+        print('\nDatabase key (%s) not found in configuration file: %s' % (DbName,ConfigFile))
+        exit(1)
+
+    Databases[Role.upper()] = DbName
+
+  PlanConfigDict['Databases'] = Databases
+  
+  # Configuration Properties
+  for PropName in sorted(PlanDict['CONFIGURATION'].keys()):
+    if(PropName != 'Databases'):                                  # <--- Databases is populated with the Role from Database Properties.
+      PropVal = PlanDict['CONFIGURATION'][PropName]
+      PlanConfigDict[PropName] = PropVal
+
+  # Populate PlanDbDict
+  # ----------------------------------------------
+  for DbName in DbList:
+    PlanDbDict[DbName] = {}
+    for PropName in sorted(PlanDict[DbName].keys()):
+      PropVal = PlanDict[DbName][PropName]
+      PlanDbDict[DbName][PropName] = PropVal
+
+  # Populate PlanInstDict
+  # ----------------------------------------------
+  for DbName in DbList:
+    for InstName in PlanDict[DbName]['Instances'].split(','):
+      InstKey = DbName + '->' + InstName
+      PlanInstDict[DbName] = { InstName : {} }
+      try:
+        for PropName in sorted(PlanDict[InstKey].keys()):
+          PropVal = PlanDict[InstKey][PropName]
+          PlanInstDict[DbName][InstName][PropName] = PropVal
+      except:
+        print('\nInstance key (%s) not found in configuration file: %s' % (InstKey,ConfigFile))
+        exit(1)
+
+  return(PlanConfigName,PlanConfigDict,PlanDbDict,PlanInstDict)
+# ---------------------------------------------------------------------------
+# End ProcessConfigFile()
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Def : ValidateConfigKeys()
+# Desc: Checks for existance of all required keys read from the configuration
+#       file.
+# Args: KeyList    - list structure containing all required keys.
+#       ConfigDict - dictionary containing all the key/value pairs read in 
+#                    from config file.
+#       Section    - ConfigFile section ('CONFIGURATION', ...)
+# Retn: True  - all keys present.
+#       False - some/all keys missing.
+# ---------------------------------------------------------------------------
+def ValidateConfigKeys(ConfigFile, KeyList, Section):
+  PlanConfig  = SafeConfigParser()
+  MissingKeys = []
+
+  # make the items in the config file case sensitive...
+  PlanConfig.optionxform = str
+
+  # Load the configuration file.
+  # -----------------------------
+  if (IsReadable(ConfigFile)):
+    PlanConfig.read(ConfigFile)
+  else:
+    print('\nConfiguration file does not exist or is not readable: %s' % ConfigFile)
+    exit(1)
+
+  try:
+    OptionList = PlanConfig.options(Section)
+  except:
+    print("%s not found in configuration file: %s" % (Section,ConfigFile))
+    print('Hello')
+    exit(1)
+
+  for key in KeyList:
+    if(key not in OptionList):
+      MissingKeys.append(key)
+      
+  if (MissingKeys == []):
+    return(True)
+  else:
+    print("Required key(s) not found in [%s] section of configuration file: %s" % (Section, ConfigFile))
+    for key in MissingKeys:
+      print('  - %s' % key)
+    return(False)
+
+# ---------------------------------------------------------------------------
+# End ValidateConfigKeys()
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Def : ExtractBrokerConfig()
+# Desc: Extracts all Data Guard Broker Properties from the configuration.
+# Args: <none>
+# Retn: str(Configuration Name)
+#       dict(Configuration)
+#       dict(Databases)
+#       dict(Instances)
+# ---------------------------------------------------------------------------
+def ExtractBrokerConfig(ConnectString):
+  BrokerConfigDict = {}
+  BrokerDbDict     = {}
+  BrokerInstDict   = {}
+  BrokerConfigName = ''
+  ProtMode         = ''
+  Databases        = {}
+  ConfigProps      = {}
+
+  
+  # Parse Configuration Report and Populate BrokerConfigDict
+  # ----------------------------------------------------------
+  DgbCmd = 'show configuration verbose;'
+
+  (rc,Stdout) = RunDgmgrl(DgbCmd, ErrChk, ConnectString)
+  
+  if(rc != 0):
+    PrintError(DgbCmd, Stdout, [])
+    exit(1)
+  else:
+    Stdout = Stdout.strip()
+    RawProps = Stdout.split('\n\n')
+    
+    for Section in RawProps:
+      # Config Name
+      Section = Section.strip()
+      SearchStr = 'Configuration - '
+      Pos = Section.find(SearchStr)
+      if(Pos >= 0):
+        BrokerConfigName = Section.split(SearchStr)[1].strip()
+        BrokerConfigDict['ConfigName'] = BrokerConfigName
+        ###~ print('BrokerConfigName = %s' % BrokerConfigName)
+      
+      # Protection Mode
+      SearchStr = 'Protection Mode: '
+      Pos = Section.find(SearchStr)
+      if(Pos >= 0):
+        (ProtSection,DbSection) = Section.split('  Databases:')
+        ProtMode = ProtSection.split(SearchStr)[1].strip()
+        BrokerConfigDict['Protection Mode'] = ProtMode
+        ###~ print('Protection Mode = %s' % ProtMode)
+      
+        DbSection = DbSection.strip()
+        for DbLine in DbSection.split('\n'):
+          DbLine = DbLine.strip()
+          (DbName, Role) = DbLine.split(' - ')
+          if(Role.strip().upper() == 'PRIMARY DATABASE'):
+            Databases['PRIMARY'] = DbName.strip()
+          elif(Role.strip().upper() == 'PHYSICAL STANDBY DATABASE'):
+            Databases['STANDBY'] = DbName.strip()
+          else:
+            Databases['UNKNOWN'] = DbName.strip()
+        BrokerConfigDict['Databases'] = Databases
+      
+      # Configuration Properties
+      SearchStr = 'Properties:'
+      Pos = Section.find(SearchStr)
+      if(Pos >= 0):
+        for PropLine in Section.split('\n')[1:]:
+          (PropName, PropVal) = PropLine.split(' = ')
+          PropName = PropName.strip()
+          PropVal = PropVal.strip()[1:-1]
+          ###~ print('%s = %s' % (PropName,PropVal))
+          BrokerConfigDict[PropName] = PropVal
+
+      # Fast-Start Failover
+      SearchStr = 'Fast-Start Failover:'
+      Pos = Section.find(SearchStr)
+      if(Pos >= 0):
+        for PropLine in Section.split('\n'):
+          PropLine = PropLine.strip()
+          (PropName, PropVal) = PropLine.split(': ')
+          BrokerConfigDict[PropName] = PropVal
+  
+      # Configuration Status
+      SearchStr = 'Configuration Status:'
+      Pos = Section.find(SearchStr)
+      if(Pos >= 0):
+        (PropName, PropVal) = Section.split(':\n')
+        BrokerConfigDict[PropName] = PropVal
+  
+  # Parse Database Report and Populate BrokerDbDict
+  # ---------------------------------------------
+  for DbRole in sorted(BrokerConfigDict['Databases'].keys()):
+    DbName = BrokerConfigDict['Databases'][DbRole]
+    DgbCmd = "show database verbose '" + DbName + "';"
+    BrokerDbDict[DbName] = {}
+    (rc,Stdout) = RunDgmgrl(DgbCmd)
+
+    if(rc != 0):
+      PrintError(DgbCmd, Stdout)
+      exit(1)
+    else:
+      Stdout = Stdout.strip()
+      RawProps = Stdout.split('\n\n')
+
+      # Parse second section (Role, Intended State, Instance Names)
+      Props,Instances = RawProps[1].split('Instance(s):')
+      Props = Props.strip()
+      Instances = Instances.strip()
+      #print(Props)
+      #print(Instances)
+
+      InstList = []
+      for InstLine in Instances.split('\n'):
+        InstLine = InstLine.strip()
+        (InstName) = InstLine.split(' ')[0].strip()
+        (InstDesc) = ' '.join(InstLine.split(' ')[1:]).strip()
+        InstName = InstName.strip()
+        InstDesc = InstDesc.strip()
+        InstList.append(InstName)
+        BrokerDbDict[DbName][InstName] = { 'Description' : InstDesc }
+      BrokerDbDict[DbName]['Instances'] = sorted(InstList)
+
+    for PropLine in Props.split('\n'):
+      PropName = PropLine.split(':')[0].strip()
+      PropVal  = PropLine.split(':')[1:]
+      if(len(PropVal) > 0):
+        PropVal = ':'.join(PropVal).strip()
+      else:
+        PropVal = PropVal[0].strip()
+
+      #print('PropName: %-40s, PropVal: %-40s' % (PropName, PropVal))
+      BrokerDbDict[DbName][PropName] = PropVal
+
+    # Parse third section (Properties)
+    for PropLine in RawProps[2].split('\n')[1:]:
+      if(PropLine != '    (*) - Please check specific instance for the property value'):
+        if(PropLine.find(' = ') >= 0):
+          PropName = PropLine.split(' = ')[0].strip()
+          PropVal  = PropLine.split(' = ')[1:]
+          if(len(PropVal) > 0):
+            PropVal = ':'.join(PropVal).strip()
+          else:
+            PropVal = PropVal[0].strip()
+        else:
+          PropName = PropLine.strip()
+          PropVal  = ''
+
+        PropName = PropName.strip()
+        PropVal = PropVal.strip()[1:-1]
+        #print('PropName: %-40s, PropVal: %-40s' % (PropName, PropVal))
+        BrokerDbDict[DbName][PropName] = PropVal
+
+    # Parse fourth section (Database Status)
+    PropName = 'Database Status'
+    PropVal  =  RawProps[3].split(':\n')[1]
+    #print('PropName: %-40s, PropVal: %-40s' % (PropName, PropVal))
+    BrokerDbDict[DbName][PropName] = PropVal
+
+  # Parse Instance Report and Populate BrokerInstDict
+  # --------------------------------------------------
+  for DbRole in Databases:
+    DbName = Databases[DbRole]
+    #print('DbName: %s' % DbName)
+    BrokerInstDict[DbName] = {}
+    for InstName in BrokerDbDict[DbName]['Instances']:
+      BrokerInstDict[DbName][InstName] = {}
+      #print(DbName + '->' + InstName)
+      DgbCmd = "show instance verbose '" + InstName + "' on database '" + DbName + "';"
+      (rc,Stdout) = RunDgmgrl(DgbCmd)
+
+      if(rc != 0):
+        PrintError(DgbCmd, Stdout, ErrorList)
+        exit(1)
+      else:
+        Stdout = Stdout.strip()
+        RawProps = Stdout.split('\n\n')
+
+      # Parse second section (HostName, PFILE)
+      for PropLine in RawProps[1].split('Properties:')[0].split('\n'):
+        PropLine = PropLine.strip()
+        if(PropLine.find(':') >= 0):
+          PropName = PropLine.split(':')[0].strip()
+          if (PropName == 'Host Name'):
+            PropName = 'HostName'
+          PropVal  = PropLine.split(':')[1:]
+          if(len(PropVal) > 0):
+            PropVal = ':'.join(PropVal).strip()
+          else:
+            PropVal = PropVal[0].strip()
+          #print('PropName: %-40s, PropVal: %-40s' % (PropName, PropVal))
+          BrokerInstDict[DbName][InstName][PropName] = PropVal
+
+      for PropLine in RawProps[1].split('Properties:')[1].split('\n'):
+        PropLine = PropLine.strip()
+        if(PropLine.find('    = ') >= 0):
+          PropName = PropLine.split('    = ')[0].strip()
+          PropVal  = PropLine.split('    = ')[1:]
+          if(len(PropVal) > 0):
+            PropVal = ':'.join(PropVal).strip()
+          else:
+            PropVal = PropVal[0].strip()
+
+          PropName = PropName.strip()
+          PropVal = PropVal.strip()[1:-1]
+          #print('PropName: %-40s, PropVal: %-40s' % (PropName, PropVal))
+          BrokerInstDict[DbName][InstName][PropName] = PropVal
+
+      # Parse fourth section (Database Status)
+      PropName = 'Instance Status'
+      PropVal  =  RawProps[2].split(':\n')[1]
+      #print('PropName: %-40s, PropVal: %-40s' % (PropName, PropVal))
+      BrokerInstDict[DbName][InstName][PropName] = PropVal
+
+  return(BrokerConfigName,BrokerConfigDict,BrokerDbDict,BrokerInstDict)
+# ---------------------------------------------------------------------------
+# End ExtractBrokerConfig()
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Def : GenConfigFile()
+# Desc: Generates a configuration file from a the broker configuration.
+# Args: <none>
+# Retn: <none>
+# ---------------------------------------------------------------------------
+def GenConfigFile(BrokerConfigName,BrokerConfigDict,BrokerDbDict,BrokerInstDict):
+  print('')
+  print('-----------cut-----------cut-----------cut-----------cut-----------cut-----------')
+  print('[GLOBAL]')
+  print('default_password                  = LexusISF')
+  print('oracle_sid                        = %s' % environ['ORACLE_SID'])
+  print('listener_port                     = 1531')
+  print('oracle_home                       = /u01/app/oracle/product/11.2.0.4/dbhome_1')
+  print('temp_directory                    = /home/oracle/dba/tmp')
+  print('log_directory                     = /home/oracle/dba/log')
+  print('ssh                               = /usr/bin/ssh')
+  print('scp                               = /usr/bin/scp')
+  print('tail                              = /usr/bin/tail')
+  print('echo                              = /bin/echo')
+  print('mkdir                             = /bin/mkdir')
+  print('ls                                = /bin/ls')
+  print('test                              = /usr/bin/test')
+  print('')
+  print('[CONFIGURATION]')
+  print('Name                              = %s' % BrokerConfigName)
+  print('Databases                         = %s' % ', '.join(BrokerConfigDict['Databases'].keys()))
+  print('FastStartFailoverThreshold        = %s' % BrokerConfigDict['FastStartFailoverThreshold'    ])
+  print('OperationTimeout                  = %s' % BrokerConfigDict['OperationTimeout'              ])
+  print('FastStartFailoverLagLimit         = %s' % BrokerConfigDict['FastStartFailoverLagLimit'     ])
+  print('CommunicationTimeout              = %s' % BrokerConfigDict['CommunicationTimeout'          ])
+  print('ObserverReconnect                 = %s' % BrokerConfigDict['ObserverReconnect'             ])
+  print('FastStartFailoverAutoReinstate    = %s' % BrokerConfigDict['FastStartFailoverAutoReinstate'])
+  print('FastStartFailoverPmyShutdown      = %s' % BrokerConfigDict['FastStartFailoverPmyShutdown'  ])
+  print('BystandersFollowRoleChange        = %s' % BrokerConfigDict['BystandersFollowRoleChange'    ])
+  print('ObserverOverride                  = %s' % BrokerConfigDict['ObserverOverride'              ])
+  print('ExternalDestination1              = %s' % BrokerConfigDict['ExternalDestination1'          ])
+  print('ExternalDestination2              = %s' % BrokerConfigDict['ExternalDestination2'          ])
+  print('PrimaryLostWriteAction            = %s' % BrokerConfigDict['PrimaryLostWriteAction'        ])
+  for DbName in BrokerConfigDict['Databases']:
+    print('')
+    print('[' + DbName + ']')
+    print('Instances                         = %s' % BrokerDbDict[DbName]['Instances'                           ])
+    print('DGConnectIdentifier               = %s' % BrokerDbDict[DbName]['DGConnectIdentifier'                 ])
+    print('ObserverConnectIdentifier         = %s' % BrokerDbDict[DbName]['ObserverConnectIdentifier'           ])
+    print('LogXptMode                        = %s' % BrokerDbDict[DbName]['LogXptMode'                          ])
+    print('DelayMins                         = %s' % BrokerDbDict[DbName]['DelayMins'                           ])
+    print('Binding                           = %s' % BrokerDbDict[DbName]['Binding'                             ])
+    print('MaxFailure                        = %s' % BrokerDbDict[DbName]['MaxFailure'                          ])
+    print('MaxConnections                    = %s' % BrokerDbDict[DbName]['MaxConnections'                      ])
+    print('ReopenSecs                        = %s' % BrokerDbDict[DbName]['ReopenSecs'                          ])
+    print('NetTimeout                        = %s' % BrokerDbDict[DbName]['NetTimeout'                          ])
+    print('RedoCompression                   = %s' % BrokerDbDict[DbName]['RedoCompression'                     ])
+    print('LogShipping                       = %s' % BrokerDbDict[DbName]['LogShipping'                         ])
+    print('PreferredApplyInstance            = %s' % BrokerDbDict[DbName]['PreferredApplyInstance'              ])
+    print('ApplyInstanceTimeout              = %s' % BrokerDbDict[DbName]['ApplyInstanceTimeout'                ])
+    print('ApplyParallel                     = %s' % BrokerDbDict[DbName]['ApplyParallel'                       ])
+    print('StandbyFileManagement             = %s' % BrokerDbDict[DbName]['StandbyFileManagement'               ])
+    print('ArchiveLagTarget                  = %s' % BrokerDbDict[DbName]['ArchiveLagTarget'                    ])
+    print('LogArchiveMaxProcesses            = %s' % BrokerDbDict[DbName]['LogArchiveMaxProcesses'              ])
+    print('LogArchiveMinSucceedDest          = %s' % BrokerDbDict[DbName]['LogArchiveMinSucceedDest'            ])
+    print('DbFileNameConvert                 = %s' % BrokerDbDict[DbName]['DbFileNameConvert'                   ])
+    print('LogFileNameConvert                = %s' % BrokerDbDict[DbName]['LogFileNameConvert'                  ])
+    print('FastStartFailoverTarget           = %s' % BrokerDbDict[DbName]['FastStartFailoverTarget'             ])
+    print('InconsistentProperties            = %s' % BrokerDbDict[DbName]['InconsistentProperties'              ])
+    print('InconsistentLogXptProps           = %s' % BrokerDbDict[DbName]['InconsistentLogXptProps'             ])
+    print('SendQEntries                      = %s' % BrokerDbDict[DbName]['SendQEntries'                        ])
+    print('LogXptStatus                      = %s' % BrokerDbDict[DbName]['LogXptStatus'                        ])
+    print('RecvQEntries                      = %s' % BrokerDbDict[DbName]['RecvQEntries'                        ])
+    print('ApplyLagThreshold                 = %s' % BrokerDbDict[DbName]['ApplyLagThreshold'                   ])
+    print('TransportLagThreshold             = %s' % BrokerDbDict[DbName]['TransportLagThreshold'               ])
+    print('TransportDisconnectedThreshold    = %s' % BrokerDbDict[DbName]['TransportDisconnectedThreshold'      ])
+  print('-----------cut-----------cut-----------cut-----------cut-----------cut-----------')
+
+  return()
+# ---------------------------------------------------------------------------
+# End GenConfigFile()
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Def : ConfigReport()
+# Desc: Prints the traditional "show configuration verbose." report.
+# Args: BrokerConfigName - string containing the configuration name.
+#       BrokerConfigDict - dictionary containing DG broker configuration details.
+# Retn: <none>
+# ---------------------------------------------------------------------------
+def ConfigReport(BrokerConfigName,BrokerConfigDict):
+
+  print('\nConfiguration - %s' % BrokerConfigName)
+
+  print('\n  Protection Mode: %s' % BrokerConfigDict['Protection Mode'])
+  print('  Databases:')
+  for DbName in sorted(BrokerConfigDict['Databases'].keys()):
+    print('    %s - %s' % (DbName, BrokerConfigDict['Databases'][DbName].title()))
+  print('\n  Properties')
+
+  print("    %-35s = '%-s'" % ('FastStartFailoverThreshold',     BrokerConfigDict['FastStartFailoverThreshold'    ]))
+  print("    %-35s = '%-s'" % ('OperationTimeout',               BrokerConfigDict['OperationTimeout'              ]))
+  print("    %-35s = '%-s'" % ('FastStartFailoverLagLimit',      BrokerConfigDict['FastStartFailoverLagLimit'     ]))
+  print("    %-35s = '%-s'" % ('CommunicationTimeout',           BrokerConfigDict['CommunicationTimeout'          ]))
+  print("    %-35s = '%-s'" % ('ObserverReconnect',              BrokerConfigDict['ObserverReconnect'             ]))
+  print("    %-35s = '%-s'" % ('FastStartFailoverAutoReinstate', BrokerConfigDict['FastStartFailoverAutoReinstate']))
+  print("    %-35s = '%-s'" % ('FastStartFailoverPmyShutdown',   BrokerConfigDict['FastStartFailoverPmyShutdown'  ]))
+  print("    %-35s = '%-s'" % ('BystandersFollowRoleChange',     BrokerConfigDict['BystandersFollowRoleChange'    ]))
+  print("    %-35s = '%-s'" % ('ObserverOverride',               BrokerConfigDict['ObserverOverride'              ]))
+  print("    %-35s = '%-s'" % ('ExternalDestination1',           BrokerConfigDict['ExternalDestination1'          ]))
+  print("    %-35s = '%-s'" % ('ExternalDestination2',           BrokerConfigDict['ExternalDestination2'          ]))
+  print("    %-35s = '%-s'" % ('PrimaryLostWriteAction',         BrokerConfigDict['PrimaryLostWriteAction'        ]))
+
+  print('\nFast-Start Failover: %-20s' % BrokerConfigDict['Fast-Start Failover'])
+
+  print('\nConfiguration Status:')
+  print('%s' % BrokerConfigDict['Configuration Status'])
+# ---------------------------------------------------------------------------
+# End ConfigReport()
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Def : DatabaseReport()
+# Desc: Prints the traditional "show database verbose {db_name}" report.
+# Args: BrokerDbDict - dictionary containing DG broker database configuration
+#                      details.
+# Retn: <none>
+# ---------------------------------------------------------------------------
+def DatabaseReport(BrokerDbDict):
+
+  for DbName in sorted(BrokerDbDict.keys()):
+    print('\nDatabase - %s' % DbName)
+    print('\n  %-16s %-30s' % ('Role:', BrokerDbDict[DbName]['Role']))
+    print('  %-16s %-30s' % ('Intended State:',  BrokerDbDict[DbName]['Intended State']))
+    if(BrokerDbDict[DbName]['Role'] == 'PHYSICAL STANDBY'):
+      print('  %-16s %-30s' % ('Transport Lag:',     BrokerDbDict[DbName]['Transport Lag']))
+      print('  %-16s %-30s' % ('Appy Lag:',          BrokerDbDict[DbName]['Apply Lag']))
+      print('  %-16s %-30s' % ('Apply Rate:',        BrokerDbDict[DbName]['Apply Rate']))
+      print('  %-16s %-30s' % ('Real Time Query:',   BrokerDbDict[DbName]['Real Time Query']))
+    print('  Instance(s):')
+    for InstName in BrokerDbDict[DbName]['Instances']:
+      InstDesc = BrokerDbDict[DbName][InstName]['Description']
+      print('    %-s %-s' % (InstName, InstDesc))
+
+    print('\n  Properties:')
+    print("    %-30s  = '%-s'" % ('DGConnectIdentifier'             , BrokerDbDict[DbName]['DGConnectIdentifier']))
+    print("    %-30s  = '%-s'" % ('ObserverConnectIdentifier'       , BrokerDbDict[DbName]['ObserverConnectIdentifier']))
+    print("    %-30s  = '%-s'" % ('LogXptMode'                      , BrokerDbDict[DbName]['LogXptMode']))
+    print("    %-30s  = '%-s'" % ('DelayMins'                       , BrokerDbDict[DbName]['DelayMins']))
+    print("    %-30s  = '%-s'" % ('Binding'                         , BrokerDbDict[DbName]['Binding']))
+    print("    %-30s  = '%-s'" % ('MaxFailure'                      , BrokerDbDict[DbName]['MaxFailure']))
+    print("    %-30s  = '%-s'" % ('MaxConnections'                  , BrokerDbDict[DbName]['MaxConnections']))
+    print("    %-30s  = '%-s'" % ('ReopenSecs'                      , BrokerDbDict[DbName]['ReopenSecs']))
+    print("    %-30s  = '%-s'" % ('NetTimeout'                      , BrokerDbDict[DbName]['NetTimeout']))
+    print("    %-30s  = '%-s'" % ('RedoCompression'                 , BrokerDbDict[DbName]['RedoCompression']))
+    print("    %-30s  = '%-s'" % ('LogShipping'                     , BrokerDbDict[DbName]['LogShipping']))
+    print("    %-30s  = '%-s'" % ('PreferredApplyInstance'          , BrokerDbDict[DbName]['PreferredApplyInstance']))
+    print("    %-30s  = '%-s'" % ('ApplyInstanceTimeout'            , BrokerDbDict[DbName]['ApplyInstanceTimeout']))
+    print("    %-30s  = '%-s'" % ('ApplyParallel'                   , BrokerDbDict[DbName]['ApplyParallel']))
+    print("    %-30s  = '%-s'" % ('StandbyFileManagement'           , BrokerDbDict[DbName]['StandbyFileManagement']))
+    print("    %-30s  = '%-s'" % ('ArchiveLagTarget'                , BrokerDbDict[DbName]['ArchiveLagTarget']))
+    print("    %-30s  = '%-s'" % ('LogArchiveMaxProcesses'          , BrokerDbDict[DbName]['LogArchiveMaxProcesses']))
+    print("    %-30s  = '%-s'" % ('LogArchiveMinSucceedDest'        , BrokerDbDict[DbName]['LogArchiveMinSucceedDest']))
+    print("    %-30s  = '%-s'" % ('DbFileNameConvert'               , BrokerDbDict[DbName]['DbFileNameConvert']))
+    print("    %-30s  = '%-s'" % ('LogFileNameConvert'              , BrokerDbDict[DbName]['LogFileNameConvert']))
+    print("    %-30s  = '%-s'" % ('FastStartFailoverTarget'         , BrokerDbDict[DbName]['FastStartFailoverTarget']))
+    print("    %-30s  = '%-s'" % ('InconsistentProperties'          , BrokerDbDict[DbName]['InconsistentProperties']))
+    print("    %-30s  = '%-s'" % ('InconsistentLogXptProps'         , BrokerDbDict[DbName]['InconsistentLogXptProps']))
+    print("    %-30s  = '%-s'" % ('SendQEntries'                    , BrokerDbDict[DbName]['SendQEntries']))
+    print("    %-30s  = '%-s'" % ('LogXptStatus'                    , BrokerDbDict[DbName]['LogXptStatus']))
+    print("    %-30s  = '%-s'" % ('RecvQEntries'                    , BrokerDbDict[DbName]['RecvQEntries']))
+    print("    %-30s  = '%-s'" % ('ApplyLagThreshold'               , BrokerDbDict[DbName]['ApplyLagThreshold']))
+    print("    %-30s  = '%-s'" % ('TransportLagThreshold'           , BrokerDbDict[DbName]['TransportLagThreshold']))
+    print("    %-30s  = '%-s'" % ('TransportDisconnectedThreshold'  , BrokerDbDict[DbName]['TransportDisconnectedThreshold']))
+    print("    %-30s "       % ('SidName(*)'                ))
+    print("    %-30s "       % ('StaticConnectIdentifier(*)'))
+    print("    %-30s "       % ('StandbyArchiveLocation(*)' ))
+    print("    %-30s "       % ('AlternateLocation(*)'      ))
+    print("    %-30s "       % ('LogArchiveTrace(*)'        ))
+    print("    %-30s "       % ('LogArchiveFormat(*)'       ))
+    print("    %-30s "       % ('TopWaitEvents(*)'          ))
+    print('    (*) - Please check specific instance for the property value')
+
+    print('\nDatabase Status:')
+    print('%s' % BrokerDbDict[DbName]['Database Status'])
+# ---------------------------------------------------------------------------
+# End DatabaseReport
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# Def : InstanceReport()
+# Desc: Prints the traditional "show instance verbose for database {db_name}"
+#       report.
+# Args: BrokerInstDict - dictionary containing DG broker instance 
+#                        configuration details.
+# Retn: <none>
+# ---------------------------------------------------------------------------
+def InstanceReport(BrokerInstDict):
+  
+  for DbName in sorted(BrokerInstDict.keys()):
+    for InstName in sorted(BrokerInstDict[DbName].keys()):
+      print("\nInstance '%s' of database '%s'" % (InstName, DbName))
+
+      print('\n  %-s %s' % ('Host Name:', BrokerInstDict[DbName][InstName]['HostName']))
+      print('  %-16s %s' % ('PFILE:',     BrokerInstDict[DbName][InstName]['PFILE']))
+      print('  Properties:')
+      print("    %-31s = '%s'" % ('SidName',   InstName))
+      print("    %-31s = '%s'" % ('StaticConnectIdentifier', BrokerInstDict[DbName][InstName]['StaticConnectIdentifier']))
+      print("    %-31s = '%s'" % ('StandbyArchiveLocation',  BrokerInstDict[DbName][InstName]['StandbyArchiveLocation']))
+      print("    %-31s = '%s'" % ('AlternateLocation',       BrokerInstDict[DbName][InstName]['AlternateLocation']))
+      print("    %-31s = '%s'" % ('LogArchiveTrace',         BrokerInstDict[DbName][InstName]['LogArchiveTrace']))
+      print("    %-31s = '%s'" % ('LogArchiveFormat',        BrokerInstDict[DbName][InstName]['LogArchiveFormat']))
+      print("    %-31s = '%s'" % ('TopWaitEvents',           BrokerInstDict[DbName][InstName]['TopWaitEvents']))
+
+      print('\nInstance Status:')
+      print("%-s" % (BrokerInstDict[DbName][InstName]['Instance Status']))
+
+# ---------------------------------------------------------------------------
+# End InstanceReport()
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Def : AuditReport()
+# Desc: Prints an audit report that compares the planned configuration with
+#       the configuration.
+# Args: <none>
+# Retn: <none>
+# ---------------------------------------------------------------------------
+def AuditReport(BrokerConfigName,BrokerConfigDict,BrokerDbDict,BrokerInstDict,PlanConfigName,PlanConfigDict,PlanDbDict,PlanInstDict):
+  CfgPropList     = []
+  DbPropList      = []
+  InstPropList    = []
+  PlanDatabases   = []
+  BrokerDatabases = []
+  PlanDbRoles     = []
+  BrokerDbRoles   = []
+
+  # Audit the Broker Configuration
+  # -------------------------------
+  ReportHeader  = '\nBroker Configuration Discrepancies'
+  ReportHeader += '\n\nProperty                             Planned                                      Configured'
+  ReportHeader += '\n------------------------------------ -------------------------------------------- --------------------------------------------'
+  ReportBody    = ''
+
+  CfgPropList.append('Databases')
+  CfgPropList.append('FastStartFailoverThreshold')
+  CfgPropList.append('OperationTimeout')
+  CfgPropList.append('FastStartFailoverLagLimit')
+  CfgPropList.append('CommunicationTimeout')
+  CfgPropList.append('ObserverReconnect')
+  CfgPropList.append('FastStartFailoverAutoReinstate')
+  CfgPropList.append('FastStartFailoverPmyShutdown')
+  CfgPropList.append('BystandersFollowRoleChange')
+  CfgPropList.append('ObserverOverride')
+  CfgPropList.append('ExternalDestination1')
+  CfgPropList.append('ExternalDestination2')
+  CfgPropList.append('PrimaryLostWriteAction')
+
+  if(BrokerConfigName.lower() != PlanConfigName.lower()):
+    ReportBody += ('\n%-36s %-44s %-44s' % ('Name', PlanConfigName, BrokerConfigName))
+  
+  for Property in CfgPropList:
+    if(BrokerConfigDict[Property] != PlanConfigDict[Property]):
+      if(Property == 'Databases'):
+        PlanDbRoles = PlanConfigDict[Property].keys()
+
+        for key, val in BrokerConfigDict[Property].items():
+          BrokerDatabases.append(key.lower() + ':' + val.lower())
+
+        for key, val in PlanConfigDict[Property].items():
+          PlanDatabases.append(key.lower() + ':' + val.lower())
+
+        if(BrokerDatabases != PlanDatabases):
+          ReportBody += ('\n%-36s %-44s %-44s' % ('Role:Database', ', '.join(PlanDatabases), ', '.join(BrokerDatabases)))
+      else:
+        ReportBody += ('\n%-36s %-44s %-44s' % (Property, PlanConfigDict[Property], BrokerConfigDict[Property]))
+  
+  if(ReportBody != ''):
+    Report = ReportHeader + ReportBody
+  else:
+    Report = ReportHeader + '\n<no discrepancies found>'
+  print(Report)
+  
+  # Audit the Broker Databases
+  # -------------------------------
+  ReportHeader  = '\n\nBroker Database Discrepancies'
+  ReportHeader += '\n\nDatabase          Property                             Planned                            Configured'
+  ReportHeader += '\n----------------- ------------------------------------ ---------------------------------- ------------------------------------'
+  ReportBody    = ''
+
+  DbPropList.append('DGConnectIdentifier')
+  DbPropList.append('ObserverConnectIdentifier')
+  DbPropList.append('LogXptMode')
+  DbPropList.append('DelayMins')
+  DbPropList.append('Binding')
+  DbPropList.append('MaxFailure')
+  DbPropList.append('MaxConnections')
+  DbPropList.append('ReopenSecs')
+  DbPropList.append('NetTimeout')
+  DbPropList.append('RedoCompression')
+  DbPropList.append('LogShipping')
+  DbPropList.append('PreferredApplyInstance')
+  DbPropList.append('ApplyInstanceTimeout')
+  DbPropList.append('ApplyParallel')
+  DbPropList.append('StandbyFileManagement')
+  DbPropList.append('ArchiveLagTarget')
+  DbPropList.append('LogArchiveMaxProcesses')
+  DbPropList.append('LogArchiveMinSucceedDest')
+  DbPropList.append('DbFileNameConvert')
+  DbPropList.append('LogFileNameConvert')
+  DbPropList.append('FastStartFailoverTarget')
+  DbPropList.append('ApplyLagThreshold')
+  DbPropList.append('TransportLagThreshold')
+  DbPropList.append('TransportDisconnectedThreshold')
+
+  for PlanDbName in PlanDbDict:
+    Found = False
+    for BrokerDbName in BrokerDbDict:
+      if(BrokerDbName.lower() == PlanDbName.lower()):
+        Found = True
+        break
+      else:
+        BrokerDbName = '<no match found>'
+    for Property in DbPropList:
+      if(BrokerDbName == '<no match found>'):
+        ReportBody += '\n%-17s %-36s %-34s %-34s' % (PlanDbName, Property, PlanDbDict[PlanDbName][Property], '<database mismatch>')
+      elif(Property in BrokerDbDict[BrokerDbName]):
+        if(BrokerDbDict[BrokerDbName][Property].lower() != PlanDbDict[PlanDbName][Property].lower()):
+          ReportBody += '\n%-17s %-36s %-34s %-34s' % (PlanDbName, Property, PlanDbDict[PlanDbName][Property], BrokerDbDict[BrokerDbName][Property])
+      else:
+        ReportBody += '\n%-17s %-36s %-34s %-34s' % (PlanDbName, Property, PlanDbDict[PlanDbName][Property], '<property mismatch>')
+  
+  if(ReportBody != ''):
+    Report = ReportHeader + ReportBody
+  else:
+    Report = ReportHeader + '\n<no discrepancies found>'
+  print(Report)
+
+  # Audit the Broker Instances
+  # -------------------------------
+  ReportHeader  = '\n\nBroker Instances'
+  ReportHeader += '\n\nDatabase          Instance          Property                             Planned                            Configured'
+  ReportHeader += '\n----------------- ----------------- ------------------------------------ ---------------------------------- ----------------------------------'
+  ReportBody    = ''
+  
+  InstPropList.append('HostName')
+  InstPropList.append('PFILE')
+  InstPropList.append('SidName')
+  InstPropList.append('StaticConnectIdentifier')
+  InstPropList.append('StandbyArchiveLocation')
+  InstPropList.append('AlternateLocation')
+  InstPropList.append('LogArchiveTrace')
+  InstPropList.append('LogArchiveFormat')
+  
+  for PlanDbName in PlanDbDict:
+    PlanInstList = PlanDbDict[PlanDbName]['Instances'].split(',')
+    BrokerDbName = ''
+    CaseAdjusted = False
+    if(PlanDbName in BrokerDbDict):
+      BrokerDbName = PlanDbName
+      CaseAdjusted = False
+    elif(PlanDbName.lower() in BrokerDbDict):
+      BrokerDbName = PlanDbName.lower()
+      CaseAdjusted = True
+    elif(PlanDbName.upper() in BrokerDbDict):
+      BrokerDbName = PlanDbName.upper()
+      CaseAdjusted = True
+    else:
+      BrokerDbName = '<no database match>'
+      CaseAdjusted = False
+
+    if(BrokerDbName == '<no database match>'):
+      BrokerInstList = []
+    else:
+      BrokerInstList = BrokerDbDict[BrokerDbName]['Instances']
+
+    for PlanInstName in PlanInstList:
+      CaseAdjusted = False
+      if(PlanInstName in BrokerInstDict[BrokerDbName]):
+        BrokerInstName = PlanInstName
+        CaseAdjusted = False
+      elif(PlanInstName.lower() in BrokerInstDict[BrokerDbName]):
+        BrokerInstName = PlanInstName.lower()
+        CaseAdjusted = True
+      elif(PlanInstName.upper() in BrokerInstDict[BrokerDbName]):
+        BrokerInstName = PlanInstName.upper()
+        CaseAdjusted = True
+      else:
+        BrokerInstName = '<no instance match>'
+        CaseAdjusted = False
+      BrokerInstKey = BrokerDbName + '->' + BrokerInstName
+    
+    for Property in InstPropList:
+      if (Property in PlanInstDict[PlanDbName][PlanInstName]):
+        PlanPropVal = PlanInstDict[PlanDbName][PlanInstName][Property]
+      else:
+        ReportBody += '\n%-17s %-17s %-36s %-34s %-34s' % (PlanDbName, PlanInstName, Property, '<property not found>', '')
+        PlanPropVal = ''
+    
+      if(BrokerDbName != '<no database match>' and BrokerInstName != '<no instance match>'):
+        if (Property in BrokerInstDict[BrokerDbName][BrokerInstName]):
+          BrokerPropVal = BrokerInstDict[BrokerDbName][BrokerInstName][Property]
+        else:
+          BrokerPropVal = ''
+      elif(BrokerDbName == '<no database match>'):
+        BrokerPropVal = '<no database match>'
+      elif(BrokerInstName == '<no instance match>'):
+        BrokerPropVal = '<no instance match>'
+    
+      PvMax            = len(PlanPropVal)
+      BvMax            = len(BrokerPropVal)
+      FmtPlanPropVal   = PlanPropVal
+      FmtBrokerPropVal = BrokerPropVal
+    
+      if (BvMax > PvMax):
+        FmtPlanPropVal   = PlanPropVal   + (' ' * (BvMax - PvMax))
+      elif(PvMax > BvMax):
+        FmtBrokerPropVal = BrokerPropVal + (' ' * (PvMax - BvMax))
+    
+      if(FmtPlanPropVal == ''):
+        FmtPlanPropVal = ['']
+      else:
+        FmtPlanPropVal   = list(ChunkString(FmtPlanPropVal, 34))
+    
+      if(FmtBrokerPropVal == ''):
+        FmtBrokerPropVal = ['']
+      else:
+        FmtBrokerPropVal = list(ChunkString(FmtBrokerPropVal, 34))
+    
+      if(BrokerPropVal != PlanPropVal):
+        ReportBody += '\n%-17s %-17s %-36s %-34s %-34s' % (PlanDbName, PlanInstName, Property, FmtPlanPropVal[0], FmtBrokerPropVal[0])
+        if(len(FmtPlanPropVal) > 1):
+          for i in range(1, len(FmtPlanPropVal)):
+            ReportBody += '\n                                                                         %-34s %-34s' % (FmtPlanPropVal[i], FmtBrokerPropVal[i])
+
+  Report = ''
+  if(ReportBody != ''):
+    Report = ReportHeader + ReportBody
+  else:
+    Report = ReportHeader + '\n<no discrepancies found>'
+  print(Report)
+
+# ---------------------------------------------------------------------------
+# End AuditReport
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Def : NewDgConfig()
+# Desc: Creates a new Data Guard Physical standby configuration.
+# Args: 
+# Retn: 
+# ---------------------------------------------------------------------------
+def NewDgConfig(PlanConfigName,PlanConfigDict,PlanDbDict,PlanInstDict):
+  ErrorString     = ''
+  ErrorCode       = ''
+
+  ## show configuration verbose;
+  ## edit configuration set property FastStartFailoverThreshold = 45;
+  ## show database verbose lab11g_sby;
+  ## show instance verbose "LAB11G2" on database LAB11G_SBY;
+  ## edit instance         "LAB11G2" on database LAB11G2 set PROPERTY LogArchiveTrace=0
+  #
+  ## CREATE CONFIGURATION LAB11G AS PRIMARY DATABASE IS LAB11G_PRI CONNECT IDENTIFIER IS LAB11G_PRI;
+  ## ADD DATABASE LAB11G_SBY AS CONNECT IDENTIFIER IS LAB11G_SBY MAINTAINED AS PHYSICAL;
+  #
+
+  print('')
+  print('This procedure executes the following tasks:')
+  print('  1) ...')
+  print('')
+  print('Requirements:')
+  print('  1) Oracle environment.')
+  print('  2) Oracle dgmgrl command.')
+  
+  if (version_info[0] >= 3):
+    Response = input("\nContinue? (y/N) ")
+  else:
+    Response = raw_input("\nContinue? (y/N) ")
+  if (Response.upper() != 'Y'):
+    print('\nExiting. No action taken...')
+    exit(0)
+  else:
+    print('\nConfirmed. Proceeding with configuration...')
+  
+  ## Disable Configuration
+  ## ---------------------------------
+  ## DGMGRL> disable configuration;
+  ## Disabled.
+  
+  ## Show Configuration (failure)
+  ## ---------------------------------
+  ## DGMGRL> show configuration verbose;
+  ## ORA-16532: Data Guard broker configuration does not exist
+  ## Configuration details cannot be determined by DGMGRL
+
+  ## Remove Configurtion
+  ## ---------------------------------
+  ## DGMGRL> remove configuration;
+  ## Removed configuration  
+  
+  PrimDbName      = PlanConfigDict['Databases']['PRIMARY']
+  PrimDbUiqueName = PlanDbDict[PrimDbName]['db_unique_name']
+  PrimTnsConnect  = PrimDbUiqueName
+
+  StbyDbName      = PlanConfigDict['Databases']['STANDBY']
+  StbyDbUiqueName = PlanDbDict[StbyDbName]['db_unique_name']
+  StbyTnsConnect  = StbyDbUiqueName
+
+  # Create the configuration...
+  # -------------------------------
+  DgbCmd = "create configuration '" + PlanConfigName + "' as primary database is '" + PrimDbUiqueName + "' connect identifier is '" + PrimTnsConnect + "';"
+  print('\n%s' % DgbCmd)
+  (rc,Stdout) = RunDgmgrl(DgbCmd, ErrChk, ConnectString)  
+  if(rc != 0):
+    PrintError(DgbCmd, Stdout, [])
+    exit(1)
+  else:
+    Stdout = Stdout.strip()
+  
+  # Add the standby database to the configuration. This may throw ORA-16796
+  # if the LOG_ARCHIVE_DEST_n parameter(s) have not been configured properly.
+  # We will ignore this error since we will be setting all parameters here
+  # anyway.
+  # --------------------------------------------------------------------------
+  DgbCmd = "add database '" + StbyDbName + "' as connect identifier is '" + StbyTnsConnect + "' maintained as physical;"
+  print('\n%s' % DgbCmd)
+  
+  (rc,Stdout) = RunDgmgrl(DgbCmd, ErrChk, ConnectString)
+  
+  if(rc != 0):
+    PrintError(DgbCmd, Stdout, [])
+    exit(1)
+  else:
+    Stdout = Stdout.strip()
+    for line in Stdout.split('\n'):
+      matchObj = search(r'ORA-[0-9]+:.*$', line)
+      if (matchObj):
+        ErrorString = matchObj.group()
+        ErrorCode = matchObj.group().split(':')[0]
+        break
+  
+  if(ErrorCode == 'ORA-01017'):
+    print(ErrorString)
+    print('Beginning with Oracle 11g the password file must be copied from the primary')
+    print('database to the standby database. ORA-01017 may be the result of the orapwd')
+    print('command being used to create new password files on the standby instances')
+    print('instead of copying the password file from the primary instances.')
+    exit(1)
+  elif(ErrorCode != ''):
+    print('Unexpected error returned from Data Guard Broker: %s' % ErrorCode)
+    exit(1)
+  else:
+    pass
+  exit()
+    
+# ---------------------------------------------------------------------------
+# End NewDgConfig()
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+
+# --------------------------------------
+# ---- End Function Definitions --------
+# --------------------------------------
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):      # if this is true, then this script is *not* being imported by another Python script.
+  Cmd             = pathsplit(argv[0])[1]
+  CmdDesc         = 'DG Broker Control (' + Cmd + ')'
+  Version         = '1.10'
+  VersionDate     = 'Thu Nov 12 20:56:07 CST 2015'
+  DevState        = 'Production'
+  Banner          = CmdDesc + ': Release ' + Version + ' '  + DevState + '. Last updated: ' + VersionDate
+  ErrChk          = True
+  ConnStr         = ''
+  ArgParser       = OptionParser()
+  Sql             = ''
+  SqlHeader       = '/***** ' + CmdDesc.upper() + ' *****/'
+  Now             = datetime.now()
+  Timestamp       = Now.strftime("%Y-%m-%d_%H:%M:%S")
+  PlanDict        = {}
+  GlobalCfg       = {}
+  PrimaryCfg      = {}
+  StandbyCfg      = {}
+  GlobalSet       = {}
+  PrimarySet      = {}
+  StandbySet      = {}
+  DgConfigProps   = {}
+  ConfigFile      = '/home/oracle/dba/etc/' + Cmd + '.cfg'
+  PlanPrimDb      = ''
+  PlanStbyDb      = ''
+  DecryptPassword = True
+  DgConfigured    = False
+  ErrorString     = ''
+  ErrorCode       = ''
+
+  PlanConfigKeys  = [
+     'Name'
+    ,'Databases'
+    ,'FastStartFailoverThreshold'
+    ,'OperationTimeout'
+    ,'FastStartFailoverLagLimit'
+    ,'CommunicationTimeout'
+    ,'ObserverReconnect'
+    ,'FastStartFailoverAutoReinstate'
+    ,'FastStartFailoverPmyShutdown'
+    ,'BystandersFollowRoleChange'
+    ,'ObserverOverride'
+    ,'ExternalDestination1'
+    ,'ExternalDestination2'
+    ,'PrimaryLostWriteAction']
+  PlanDbKeys = [
+     'db_name'                        
+    ,'db_unique_name'                 
+    ,'data_diskgroup'                 
+    ,'reco_diskgroup'                 
+    ,'dg_broker_config_file1'         
+    ,'dg_broker_config_file2'         
+    ,'dg_broker_start'                
+    ,'fal_client'                     
+    ,'fal_server'                     
+    ,'log_archive_config'             
+    ,'Role'                           
+    ,'IntendedState'                  
+    ,'Instances'                      
+    ,'DGConnectIdentifier'            
+    ,'ObserverConnectIdentifier'      
+    ,'LogXptMode'                     
+    ,'DelayMins'                      
+    ,'Binding'                        
+    ,'MaxFailure'                     
+    ,'MaxConnections'                 
+    ,'ReopenSecs'                     
+    ,'NetTimeout'                     
+    ,'RedoCompression'                
+    ,'LogShipping'                    
+    ,'PreferredApplyInstance'         
+    ,'ApplyInstanceTimeout'           
+    ,'ApplyParallel'                  
+    ,'StandbyFileManagement'          
+    ,'ArchiveLagTarget'               
+    ,'LogArchiveMaxProcesses'         
+    ,'LogArchiveMinSucceedDest'       
+    ,'DbFileNameConvert'              
+    ,'LogFileNameConvert'             
+    ,'FastStartFailoverTarget'        
+    ,'ApplyLagThreshold'              
+    ,'TransportLagThreshold'          
+    ,'TransportDisconnectedThreshold']
+  PlanInstKeys = [
+     'HostName'               
+    ,'PFILE'                  
+    ,'SidName'                
+    ,'StaticConnectIdentifier'
+    ,'StandbyArchiveLocation' 
+    ,'AlternateLocation'      
+    ,'LogArchiveTrace'        
+    ,'LogArchiveFormat']       
+
+  # For handling termination in stdout pipe; ex: when you run: oerrdump | head
+  signal(SIGPIPE, SIG_DFL)
+
+  # Process command line options
+  # ----------------------------------
+  ArgParser = OptionParser()
+  ArgParser.add_option("-a",  dest="AudReport",   action="store_true",  default=False, help="print an audit report")
+  ArgParser.add_option("-c",  dest="CfgReport",   action="store_true",  default=False, help="print a configuration report")
+  ArgParser.add_option("-d",  dest="DbReport",    action="store_true",  default=False, help="print a database report")
+  ArgParser.add_option("-g",  dest="GenConfig",   action="store_true",  default=False, help="generate a config file from an active configuration")
+  ArgParser.add_option("-i",  dest="InstReport",  action="store_true",  default=False, help="print an instance report")
+  ArgParser.add_option("-n",  dest="NewConfig",   action="store_true",  default=False, help="create a new Data Guard configuration")
+  ArgParser.add_option("--r", dest="Replay",      action="store_true",  default=False, help="replay using picked results")
+  ArgParser.add_option("--s", dest="ShowSql",     action="store_true",  default=False, help="show SQL.")
+  ArgParser.add_option("--c", dest="ShowConfig",  action="store_true",  default=False, help="show configuration.")
+  ArgParser.add_option("--v", dest="ShowVer",     action="store_true",  default=False, help="show version info.")
+
+  Options, args = ArgParser.parse_args()
+  argc = len(args)
+
+  AudReport   = Options.AudReport
+  CfgReport   = Options.CfgReport
+  DbReport    = Options.DbReport
+  InstReport  = Options.InstReport
+  GenConfig   = Options.GenConfig
+  NewConfig   = Options.NewConfig
+  Replay      = Options.Replay
+  ShowVersion = Options.ShowVer
+  ShowConfig  = Options.ShowConfig
+  ShowSql     = Options.ShowSql
+  ShowVersion = Options.ShowVer
+
+
+  if (ShowVersion):
+    print('\n%s' % Banner)
+    exit()
+
+  if (not IsReadable(ConfigFile)):
+    print('Cannot open configuration file for read: %s' % ConfigFile)
+    exit(1)
+
+  # Show the configuration parameters.
+  # -----------------------------------
+  if (ShowConfig):
+    DumpConfig(ConfigFile)
+    exit()
+
+  # Tmp dir.
+  # ---------------------
+  if 'TempDirectory' in GlobalCfg:
+    TmpDir = GlobalCfg['TempDirectory']
+  else:
+    TmpDir = '/tmp'
+
+  # Log dir.
+  # ---------------------
+  if 'LogDirectory' in GlobalCfg:
+    LogDir = GlobalCfg['LogDirectory']
+  else:
+    LogDir = '/tmp'
+
+  # Name the logfile.
+  #--------------------------
+  Logtime = datetime.now().strftime("%Y%m%d.%H%M%S")
+  Logfile = pathjoin(LogDir, Cmd + '.' + Logtime + '.log')
+  
+  # Attach logfile to stdout
+  # -------------------------
+  sys.stdout = Logger(Logfile)
+
+  if 'ORACLE_SID' not in environ.keys():
+    print('\nORACLE_SID is required. Configure your Oracle environment and try again')
+    exit(1)
+
+  if 'ORACLE_HOME' not in environ.keys():
+    print('\nORACLE_HOME is required. Configure your Oracle environment and try again')
+    exit(1)
+
+  # Name the replay file...
+  PickleFile = '/tmp/' + Cmd + '.' + environ['ORACLE_SID'] + '.pkl'
+
+  (PlanConfigName,PlanConfigDict,PlanDbDict,PlanInstDict) = ProcessConfigFile(ConfigFile)
+  
+  # Validate the Plan Configuration section of the config file.
+  ValidConfig = ValidateConfigKeys(ConfigFile, PlanConfigKeys, 'CONFIGURATION')
+  if (ValidConfig == False):
+    exit(1)
+    
+  # Validate the Plan Databases and Instances sections of the config file.
+  for DbRole in PlanConfigDict['Databases']:
+    DbName = PlanConfigDict['Databases'][DbRole].strip()
+    ValidConfig = ValidateConfigKeys(ConfigFile, PlanDbKeys, DbName)
+
+    if (ValidConfig == False):
+      exit(1)
+    for InstName in PlanDbDict[DbName]['Instances'].split(','):
+      InstName = InstName.strip()
+      InstKey = DbName + '->' + InstName
+      ValidConfig = ValidateConfigKeys(ConfigFile, PlanInstKeys, InstKey)
+      if (ValidConfig == False):
+        exit(1)
+
+  PlanPrimDb = PlanConfigDict['Databases']['PRIMARY']
+  PlanStbyDb = PlanConfigDict['Databases']['STANDBY'] 
+  PlanPrimPassword = GetPassword(PlanPrimDb, 'sys', DecryptPassword)
+  PlanStbyPassword = GetPassword(PlanStbyDb, 'sys', DecryptPassword)
+ 
+  ###! print('PlanPrimPassword: %s' % PlanPrimPassword)
+  ###! print('PlanStbyPassword: %s' % PlanStbyPassword)
+  
+  if(PlanPrimPassword == ''):
+    ConnectString = '/'
+  else:
+    ConnectString = 'sys/' + PlanPrimPassword + '@' + PlanPrimDb
+  
+  # Load from replay file...
+  if (Replay == True):
+    if (IsReadable(PickleFile) == True):
+      try:
+        hPickleFile = open(PickleFile,'rb')
+      except:
+         print('\nCannot open the replay file for read: %s' % PickleFile)
+         exit(1)
+      try:
+        (BrokerConfigName,BrokerConfigDict,BrokerDbDict,BrokerInstDict) = pickle.load(hPickleFile)
+      except:
+         print('\nCannot parse the replay file: %s' % PickleFile)
+         exit(1)
+    else:
+      print('\nNo replay file found: %s' % PickleFile)
+      exit(1)
+  else:
+    # ...or collect new values from dgmgrl.
+
+    # Parse Configuration Report and Populate BrokerConfigDict
+    # ----------------------------------------------------------
+    DgbCmd = 'show configuration;'
+
+    (rc,Stdout) = RunDgmgrl(DgbCmd, ErrChk, ConnectString)
+
+    if(rc != 0):
+      PrintError(DgbCmd, Stdout, [])
+      exit(1)
+    else:
+      Stdout = Stdout.strip()
+
+      for line in Stdout.split('\n'):
+        # Check for "ORA-16532: Data Guard broker configuration does not exist"
+        matchObj = search(r'ORA-[0-9]+:.*$', line)
+        if (matchObj):
+          ErrorString = matchObj.group()
+          ErrorCode = matchObj.group().split(':')[0]
+          break
+
+    if(ErrorCode == 'ORA-16532'):
+      DgConfigured = False
+      print('%s' % ErrorString)
+    elif(ErrorCode != ''):
+      print('Unexpected error returned from Data Guard Broker: %s' % ErrorCode)
+      exit(1)
+    else:
+      DgConfigured = True
+      (BrokerConfigName,BrokerConfigDict,BrokerDbDict,BrokerInstDict) = ExtractBrokerConfig(ConnectString)
+
+  print('\n==============================================================================================================================================')
+  print('%-105s%37s' % (Cmd, datetime.now().strftime("%Y-%m-%d %H:%M")))
+  print('==============================================================================================================================================')
+  print('ORACLE_SID  : %s' % environ['ORACLE_SID'])
+  print('ORACLE_HOME : %s' % environ['ORACLE_HOME'])
+  if (Replay == True):
+    print('Replay file : %s' % PickleFile)
+  print('Log file    : %s' % Logfile)
+
+  if(DgConfigured == True):
+    if(CfgReport == True):
+      print('')
+      ConfigReport(BrokerConfigName,BrokerConfigDict)
+  
+    if(DbReport == True):
+      print('')
+      DatabaseReport(BrokerDbDict)
+  
+    if(InstReport == True):
+      print('')
+      InstanceReport(BrokerInstDict)
+  
+    if(AudReport == True):
+      print('')
+      AuditReport(BrokerConfigName,BrokerConfigDict,BrokerDbDict,BrokerInstDict,PlanConfigName,PlanConfigDict,PlanDbDict,PlanInstDict)
+  
+    if(GenConfig == True):
+      GenConfigFile(BrokerConfigName,BrokerConfigDict,BrokerDbDict,BrokerInstDict)
+  else:
+    if(NewConfig == True):
+      NewDgConfig(PlanConfigName,PlanConfigDict,PlanDbDict,PlanInstDict)
+
+    # Save Replay Information
+    # --------------------------
+    try:
+      hPickleFile = open(PickleFile,'wb')
+    except:
+       print('Cannot open the replay file for write:', PickleFile)
+    pickle.dump((BrokerConfigName,BrokerConfigDict,BrokerDbDict,BrokerInstDict), hPickleFile)
+    hPickleFile.close()
+  
+  print('\n==============================================================================================================================================')
+  print('%-105s%37s' % ('Process Complete', datetime.now().strftime("%Y-%m-%d %H:%M")))
+  print('==============================================================================================================================================')
+  exit(0)
+

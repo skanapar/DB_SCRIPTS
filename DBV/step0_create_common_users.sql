@@ -1,0 +1,10 @@
+GRANT CREATE SESSION, SET CONTAINER TO c##dbv_owner_root IDENTIFIED BY &password CONTAINER = ALL;
+GRANT CREATE SESSION, SET CONTAINER TO c##dbv_owner_root_backup IDENTIFIED BY &password CONTAINER = ALL;
+GRANT CREATE SESSION, SET CONTAINER TO c##dbv_acctmgr_root IDENTIFIED BY &password CONTAINER = ALL;
+GRANT CREATE SESSION, SET CONTAINER TO c##dbv_acctmgr_root_backup IDENTIFIED BY &password CONTAINER = ALL;
+grant restricted session to  c##dbv_owner_root container=all;
+ grant restricted session to  c##dbv_owner_root_backup container=all;
+alter user C##DBV_OWNER_ROOT  profile C##APP_SVC_NO_EXP_ACCT_PROFILE ;
+alter user c##dbv_acctmgr_root  profile C##APP_SVC_NO_EXP_ACCT_PROFILE ;
+alter user C##DBV_OWNER_ROOT_BACKUP  profile C##APP_SVC_NO_EXP_ACCT_PROFILE ;
+alter user c##dbv_acctmgr_root_BACKUP  profile C##APP_SVC_NO_EXP_ACCT_PROFILE ;

@@ -1,0 +1,301 @@
+#!/bin/env python
+
+###################################################################################################
+# Name:         gen_register_db                                                                   #
+# Author:       Randy Johnson                                                                     #
+# Description:  Generates srvctl commands to register the database, instances, and service names  #
+#               into the RAC cluster.                                                             #
+# Dependencies:                                                                                   #
+#                                                                                                 #
+# Usage: gen_register_db [options] ../etc/migration.conf                                          #
+#                                                                                                 #
+# Options:                                                                                        #
+# -h, --help  show this help message and exit                                                     #
+# -v          show version info.                                                                  #
+# -c          show configuration.                                                                 #
+#                                                                                                 #
+# History:                                                                                        #
+#                                                                                                 #
+# Date       Ver. Who              Change Description                                             #
+# ---------- ---- ---------------- -------------------------------------------------------------- #
+# 02/16/2015 1.00 Randy Johnson    Initial release.                                               #
+###################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+import sys
+from datetime     import datetime
+from os           import getpgid
+from os           import environ
+from os.path      import basename
+from os.path      import dirname
+from os.path      import join as pathjoin
+from os.path      import split as pathsplit
+from optparse     import OptionParser
+from sys          import argv
+from sys          import exit
+from string       import join
+from subprocess   import Popen
+from subprocess   import PIPE
+from subprocess   import STDOUT
+from ConfigParser import SafeConfigParser
+from Migration    import DumpConfig
+from Migration    import IsReadable
+from Migration    import IsExecutable
+from Migration    import GetDbState
+from Migration    import Logger
+from Migration    import GetNodes
+from Migration    import ParseSqlout
+from Migration    import PrintError
+from Migration    import ProcessConfig
+from Migration    import PythonStackTrace
+from Migration    import RunSqlplus
+from Migration    import SetOracleEnv
+from Migration    import WriteFile
+
+# --------------------------------------
+# ---- Function Definitions ------------
+# --------------------------------------
+
+# --------------------------------------
+# ---- End Function Definitions --------
+# --------------------------------------
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):      # if this is true, then this script is *not* being imported by another Python script.
+  Cmd          = pathsplit(argv[0])[1]
+  CmdDesc      = 'Generate Srvctl Cmds (' + Cmd + ')'
+  VersionDate  = 'Mon Feb 16 17:06:51 EST 2015'
+  Version      = '1.00'
+  ErrChk       = True
+  Sql          = ''
+  Size         = '10G'
+  GroupCount   = 6
+  MigDict      = {}
+  SrvctlCmd    = ''
+
+  # Process command line options
+  # ----------------------------------
+  Usage = Cmd + ' [options] ../etc/migration.conf'
+  ArgParser = OptionParser(Usage)
+  ArgParser.add_option("-v", action="store_true", dest="ShowVersion",  default=False,           help="show version info.")
+  ArgParser.add_option("-c", action="store_true", dest="ShowConfig",   default=False,           help="show configuration.")
+
+  Options, args = ArgParser.parse_args()
+  argc = len(args)
+
+  print ''
+
+  if (Options.ShowVersion):
+    Banner = CmdDesc + ', Release ' + Version + ' Production, ' + VersionDate
+    print Banner
+    exit()
+
+  if (argc > 0):
+    ConfigFile = args[argc-1]
+  else:
+    print 'Configuration file is required.'
+    print '\nExample:'
+    print ' ', Usage
+    exit(1)
+
+  # Show the configuration parameters.
+  # -----------------------------------
+  if (Options.ShowConfig):
+    DumpConfig(ConfigFile)
+    exit()
+
+  # Create dictionary of configuration settings.
+  # -----------------------------------------------------------
+  MigDict = ProcessConfig(ConfigFile, 'migration')
+
+  # Database name
+  # ---------------------
+  if 'db_name' in MigDict:
+    DbName = MigDict['db_name']
+  else:
+    print '\nDatabase name is required. Check the db_name key in the configuration file:', ConfigFile
+    exit(1)
+
+  # Database unique name
+  # ---------------------
+  if 'db_unique_name' in MigDict:
+    DbUniqueName = MigDict['db_unique_name']
+  else:
+    print '\nDatabase unique name is required. Check the db_unique_name key in the configuration file:', ConfigFile
+    exit(1)
+
+  # Data diskgroup
+  # ---------------------
+  if 'data_diskgroup' in MigDict:
+    DataDg = MigDict['data_diskgroup']
+  else:
+    print '\nData diskgroup is required. Check the data_diskgroup key in the configuration file:', ConfigFile
+    exit(1)
+
+  # Reco diskgroup
+  # ---------------------
+  if 'reco_diskgroup' in MigDict:
+    RecoDg = MigDict['reco_diskgroup']
+  else:
+    print '\nReco diskgroup is required. Check the reco_diskgroup key in the configuration file:', ConfigFile
+    exit(1)
+
+  # Service name for backups
+  # --------------------------
+  if 'backup_service_name' in MigDict:
+    BackupSvcName = MigDict['backup_service_name']
+  else:
+    print '\nBackup Service Name is required. Check the backup_service_name key in the configuration file:', ConfigFile
+    exit(1)
+
+  # Service name for application connections
+  # -----------------------------------------
+  if 'app_service_name' in MigDict:
+    AppSvcName = MigDict['app_service_name']
+  else:
+    print '\nApplication Service Name is required. Check the app_service_name key in the configuration file:', ConfigFile
+    exit(1)
+
+  # Connection failover parameters
+  # --------------------------------
+  if 'conn_failover_parms' in MigDict:
+    ConnFoParms = MigDict['conn_failover_parms']
+  else:
+    print '\nConnection failover parameters required. Check the conn_failover_parms key in the configuration file:', ConfigFile
+    exit(1)
+
+  # Migration log dir.
+  # ---------------------
+  if 'migration_log' in MigDict:
+    MigLog = MigDict['migration_log']
+  else:
+    print '\nMigration log directory is required. Check the migration_log key in the configuration file:', ConfigFile
+    exit(1)
+
+  # Name the logfile.
+  #--------------------------
+  Logtime = datetime.now().strftime("%Y%m%d.%H%M%S")
+  Logfile = pathjoin(MigLog, Cmd + '.' + Logtime + '.log')
+
+  # Attach logfile to stdout
+  # -------------------------
+  sys.stdout = Logger(Logfile)
+
+  # Migration tmp dir.
+  # ---------------------
+  if 'migration_tmp' in MigDict:
+    MigTmp = MigDict['migration_tmp']
+  else:
+    print '\nMigration tmp directory is required. Check the migration_tmp key in the configuration file:', ConfigFile
+    exit(1)
+
+  # Name the sql script.
+  # -----------------------
+  RegisterDbScript = pathjoin(MigTmp, Cmd.upper() + '.' + Logtime + '.SH')
+
+  # Oracle SID
+  # ---------------------
+  if 'oracle_sid' in MigDict:
+    OracleSid = MigDict['oracle_sid']
+  else:
+    print '\nOracle Sid is required. Check the oracle_sid key in the configuration file:', ConfigFile
+    exit(1)
+
+  # Oracle home
+  # ---------------------
+  if 'oracle_home' in MigDict:
+    OraHome = MigDict['oracle_home']
+  else:
+    print '\nOracle home is required. Check the oracle_home key in the configuration file:', ConfigFile
+    exit(1)
+
+  # Set the database environment.
+  # ------------------------------
+  OraSid, OraHome = SetOracleEnv(OracleSid)
+  Sqlplus = pathjoin(OraHome, 'bin', 'sqlplus')
+  if (not IsExecutable(Sqlplus)):
+    print 'The following command cannot be executed by this user account:', Sqlplus
+    exit(1)
+
+  print '\n============================================================================================================================'
+  print '%s: Release %s Production, %28s %24s' % (CmdDesc, Version, VersionDate, datetime.now().strftime("%Y-%m-%d %H:%M"))
+  print '============================================================================================================================'
+  print 'Gathering cluster information...'
+  NodeDict = GetNodes()
+
+  print ""
+  print "The following settings will be used for this run:"
+  print '  Oracle SID               :', MigDict['oracle_sid']
+  print '  Oracle Home              :', MigDict['oracle_home']
+  print '  Db Name                  :', DbName
+  print '  Db Unique Name           :', DbUniqueName
+  print '  Data Diskgroup           :', DataDg
+  print '  Reco Diskgroup           :', RecoDg
+  print '  Log Directory            :', MigDict['migration_log']
+  print '  Tmp Directory            :', MigDict['migration_tmp']
+  print '  Register Database Script :', RegisterDbScript
+  print '  Log file                 :', Logfile
+
+  print ""
+  print "This script performs the following tasks:"
+  print "  1) Generates the srvctl commands to register the database"
+  print "     into the RAC cluster."
+  print ""
+  print "Requirements:"
+  print "  1) Oracle environment."
+
+  Response = raw_input("\nContinue? (y/N) ")
+  if (Response.upper() != 'Y'):
+    print '\nExiting. No changes made...'
+    exit(0)
+  else:
+    print '\nConfirmed. Proceeding...\n'
+
+  Spfile = DataDg + '/' + DbUniqueName.upper() + '/spfile' + DbName + '.ora'
+
+  # Remove the leading '+' from disk groups.
+  if (DataDg[0:1] == '+'):
+    DataDg = DataDg[1:]
+  if (RecoDg[0:1] == '+'):
+    RecoDg = RecoDg[1:]
+
+  # Generate the commands...
+  # -------------------------------------
+  SrvctlCmd += '\n# Register the database into the cluster.\n'
+  SrvctlCmd += '# ------------------------------------------------------------------\n'
+  SrvctlCmd += 'srvctl add database \\\n'
+  SrvctlCmd += '  -d ' + DbUniqueName + ' \\\n'
+  SrvctlCmd += '  -n ' + DbName + ' \\\n'
+  SrvctlCmd += '  -o ' + OraHome + ' \\\n'
+  SrvctlCmd += '  -p \'' + Spfile + '\' \\\n'
+  SrvctlCmd += '  -y automatic \\\n'
+  SrvctlCmd += '  -a "' + DataDg + ',' + RecoDg + '" \\\n'
+  SrvctlCmd += '  -t immediate\n'
+
+  SrvctlCmd += '\n# Register the instances into the cluster.\n'
+  SrvctlCmd += '# ------------------------------------------------------------------\n'
+  for NodeName in sorted(NodeDict.keys()):
+    SrvctlCmd += 'srvctl add instance -d ' + DbUniqueName + ' -i ' + DbName + NodeDict[NodeName]['NodeId'] + ' -n ' + NodeName + '\n'
+
+  SrvctlCmd += '\n# Register the service names into the cluster.\n'
+  SrvctlCmd += '# ------------------------------------------------------------------\n'
+  SrvctlCmd += 'srvctl add service -d ' + DbUniqueName + ' -s ' + BackupSvcName.upper() + ' -r ' + join(sorted(NodeDict.keys()), ',') + ' ' + ConnFoParms + '\n'
+  SrvctlCmd += 'srvctl add service -d ' + DbUniqueName + ' -s ' + AppSvcName.upper()    + ' -r ' + join(sorted(NodeDict.keys()), ',') + ' ' + ConnFoParms + '\n'
+  SrvctlCmd += 'srvctl add service -d ' + DbUniqueName + ' -s ' + DbName.upper()        + ' -r ' + join(sorted(NodeDict.keys()), ',') + ' ' + ConnFoParms + '\n'
+  for NodeName in sorted(NodeDict.keys()):
+    SrvctlCmd += 'srvctl add service -d ' + DbUniqueName + ' -s ' + DbName.upper() + NodeDict[NodeName]['NodeId'] + ' -r ' + NodeName + ' ' + ConnFoParms + '\n'
+
+  print 'Write the commands to the script:', basename(RegisterDbScript)
+  WriteFile(RegisterDbScript, SrvctlCmd)
+
+  SrvctlCmd = SrvctlCmd.strip()
+  print SrvctlCmd
+
+  print '\n============================================================================================================================'
+  print '%s Complete %93s' % (Cmd, datetime.now().strftime("%Y-%m-%d %H:%M"))
+  print '============================================================================================================================'
+  exit(0)

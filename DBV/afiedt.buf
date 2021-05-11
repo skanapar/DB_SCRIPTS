@@ -1,0 +1,9 @@
+with t as (select dbms_metadata.get_ddl('USER', username) ddl
+  from dba_users
+ where oracle_maintained = 'N'
+   and common = 'NO'
+and username like 'DEV%'
+ order by username)
+select replace(substr(ddl,1,instr(ddl,'DEFAULT')-1), 'CREATE', 'ALTER') ||';' ddl2
+  from t
+/

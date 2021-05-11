@@ -1,0 +1,2 @@
+select BACKUP_TYPE, INCREMENTAL_LEVEL, START_TIME, COMPLETION_TIME from v$backup_set where START_TIME>sysdate-14
+/

@@ -1,0 +1,1716 @@
+#!/bin/env python
+
+###################################################################################################
+# Name:         dbsb                                                                              #
+# Author:       Randy Johnson                                                                     #
+# Description:  Creates a dbca template for creating a database in silent mode.                   #
+# Dependencies:                                                                                   #
+#                                                                                                 #
+# Usage: dbsb [options]                                                                           #
+#                                                                                                 #
+# options:                                                                                        #
+#   -h, --help       show this help message and exit                                              #
+#   -d DBNAME        Database Name                                                                #
+#   -p PARFILE       Parameter File                                                               #
+#   -f TEMPLATEFILE  Template File Name                                                           #
+#   -u DBUNIQUENAME  Database Unique Name                                                         #
+#   --s              Show Only (do not create database)                                           #
+#   --t              Trace Output                                                                 #
+#   --v              Version Information                                                          #
+#                                                                                                 #
+# History:                                                                                        #
+#                                                                                                 #
+# Date       Ver. Who              Change Description                                             #
+# ---------- ---- ---------------- -------------------------------------------------------------- #
+# 01/25/2016 1.00 Randy Johnson    Initial release.                                               #
+# 02/08/2017 1.10 Randy Johnson    Substantial updates.                                           #
+# 02/12/2018 1.20 Randy Johnson    More fixes & updates.                                          #
+# 02/13/2018 1.30 Randy Johnson    First fully operational version.                               #
+# 02/14/2018 1.40 Randy Johnson    Modificaions to DBCA_COMMAND_LINE and substantial changes to   #
+#                                  MergeParms. Added Merge() function for deep merge of           #
+#                                  dictionaries.                                                  #
+# 03/06/2018 1.41 Randy Johnson    Bugfix in MergeParms(). DataDest and RecoDest were incorrectly #
+#                                  set to DefaultsDict['DBSB']['data'/'reco']. Changed to         #
+#                                  MergeDict['DBSB']['data'/'reco'].                              #
+#                                  Added validation for parfile options. Now exits with an error  #
+#                                  message if an invalid option is specified in the parfile.      #
+###################################################################################################
+
+# --------------------------------------
+# ---- Import Python Modules -----------
+# --------------------------------------
+import traceback
+import sys
+from datetime     import datetime
+from optparse     import OptionParser
+from os.path      import basename
+from os.path      import join as pathjoin
+from sys          import argv
+from sys          import exit
+from sys          import version_info
+
+# ---------------------------------------------------------------------------
+# Def : CheckForIncompat()
+# Desc: Checks for parameters that are incompatible with this version of
+#       Oracle. If found then issue a warning and remove the parameter.
+# Args: 1:dictionary of configuraton parameters, pr, )
+# Retn: ConfigDict, RemovedOptions
+# ---------------------------------------------------------------------------
+def CheckForIncompat(OraVers, ConfigDict, DbcaArgs):
+  InvalidOptions = []
+  RemovedOptions = []
+
+  if (OraVers < 12):
+    InvalidOptions.append('createAsContainerDatabase')
+    InvalidOptions.append('createPluggableDatabase')
+
+  if (OraVers < 12):
+    for Option in InvalidOptions:
+      if (Option in ConfigDict['DBCA_COMMAND_LINE']):
+        del ConfigDict['DBCA_COMMAND_LINE'][Option]
+        RemovedOptions.append(Option)
+      i=0
+      for Arg in DbcaArgs:
+        if(Option == Arg.split(' ')[0]):
+          del DbcaArgs[i]
+        i+=1
+
+  return(ConfigDict, RemovedOptions)
+# ---------------------------------------------------------------------------
+# End CheckForIncompat()
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Def : PrintMessage()
+# Desc: Prints error, warning, note messages.
+# Args: Type, Message
+# Retn: None
+# ---------------------------------------------------------------------------
+def PrintMessage(Type, Message):
+
+  if (Type.upper() in ('ERROR','WARNING')):
+    print('\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<');
+    print(Type.capitalize())
+    print(Message)
+    print('>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<');
+  else:
+    print(Type.capitalize())
+    print(Message)
+
+  return
+# ---------------------------------------------------------------------------
+# End PrintMessage()
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Def : TranslateParm()
+# Desc: Translates config file option to the template attributes.
+# Args: Parameter from the configuration file.
+# Retn: Translated Attribute
+# ---------------------------------------------------------------------------
+def TranslateParm(Section, Option):
+  Attr               = ''
+  Section            = Section.upper()
+  Option             = Option.upper()
+  TransDict          = {}
+  TransDict[Section] = {}
+
+  if (Section in ('CUSTOM_SCRIPTS','INIT_PARAMETERS','DBSB')):
+    Attr = Option.lower()
+  elif (Section == 'COMMON_ATTRIBUTES'):
+    if (Option in ('OMS','JSERVER','SPATIAL','IMEDIA','XDB_PROTOCOLS','ORACLE_TEXT','SAMPLE_SCHEMA','CWMLITE','EM_REPOSITORY','APEX','OWB','DV')):
+      Attr = Option
+  elif (Section == 'CONTROLFILE_ATTRIBUTES'):
+    TransDict[Section]['MAX_DATA_FILES']  = 'maxDatafiles'
+    TransDict[Section]['MAX_LOG_FILES']   = 'maxLogfiles'
+    TransDict[Section]['MAX_LOG_MEMBERS'] = 'maxLogMembers'
+    TransDict[Section]['MAX_LOG_HISTORY'] = 'maxLogHistory'
+    TransDict[Section]['MAX_INSTANCES']   = 'maxInstances'
+    try:
+      (FilePath, FileId) = Option.split('_')
+      if ((FilePath == 'FILEPATH') and (FileId in ('1','2','3','4','5','6','7','8','9'))):
+        Attr = FilePath.lower() + '_' + FileId
+    except:
+      pass
+    try:
+      Attr = TransDict[Section][Option]
+    except:
+      pass
+  elif (Section == 'REDO'):
+    TransDict[Section]['THREADS']       = 'threads'
+    TransDict[Section]['GROUPS']        = 'groups'
+    TransDict[Section]['MEMBERS']       = 'members'
+    TransDict[Section]['REUSE']         = 'reuse'
+    TransDict[Section]['FILE_SIZE']     = 'fileSize'
+    TransDict[Section]['MEMBER_PREFIX'] = 'memberPrefix'
+    TransDict[Section]['FILE_PATH']     = 'filePath'
+    try:
+      Attr = TransDict['REDO'][Option]
+    except:
+      pass
+  elif (Section == 'MISC_PARAMETERS'):
+    TransDict[Section]['DATABASE_TYPE']          = 'databaseType'
+    TransDict[Section]['MAX_USER_CONN']          = 'maxUserConn'
+    TransDict[Section]['PERCENTAGE_MEM_TO_SGA']  = 'percentageMemTOSGA'
+    TransDict[Section]['CUSTOM_SGA']             = 'customSGA'
+    TransDict[Section]['CHARACTER_SET']          = 'characterSet'
+    TransDict[Section]['NATIONAL_CHARACTER_SET'] = 'nationalCharacterSet'
+    TransDict[Section]['ARCHIVELOG_MODE']        = 'archiveLogMode'
+    try:
+      Attr = TransDict['MISC_PARAMETERS'][Option]
+    except:
+      pass
+  elif (Section == 'DBCA_COMMAND_LINE'):
+    TransDict = {}
+    TransDict['DBCA_COMMAND_LINE'] = {}
+    #TransDict['DBCA_COMMAND_LINE']['INIT_PARAMS']                  = 'initParams'
+    TransDict['DBCA_COMMAND_LINE']['TEMPLATE_NAME']                = 'templateName'
+    TransDict['DBCA_COMMAND_LINE']['NODE_LIST']                    = 'nodelist'
+    TransDict['DBCA_COMMAND_LINE']['STORAGE_TYPE']                 = 'storageType'
+    TransDict['DBCA_COMMAND_LINE']['SYS_PASSWORD']                 = 'sysPassword'
+    TransDict['DBCA_COMMAND_LINE']['SYSTEM_PASSWORD']              = 'systemPassword'
+    TransDict['DBCA_COMMAND_LINE']['DBSNMP_PASSWORD']              = 'dbsnmpPassword'
+    TransDict['DBCA_COMMAND_LINE']['DATABASE_CONF_TYPE']           = 'databaseConfType'
+    TransDict['DBCA_COMMAND_LINE']['CREATE_AS_CONTAINER_DATABASE'] = 'createAsContainerDatabase'
+    TransDict['DBCA_COMMAND_LINE']['EM_CONFIGURATION']             = 'emConfiguration'
+    TransDict['DBCA_COMMAND_LINE']['DV_CONFIGURATION']             = 'dvConfiguration'
+    TransDict['DBCA_COMMAND_LINE']['OLS_CONFIGURATION']            = 'olsConfiguration'
+    TransDict['DBCA_COMMAND_LINE']['RUN_CVU_CHECKS']               = 'runCVUChecks'
+    try:
+      Attr = TransDict['DBCA_COMMAND_LINE'][Option]
+    except:
+      pass
+  elif (Section == 'TABLESPACES'):
+    TransDict = {}
+    TransDict['TABLESPACES'] = {}
+    TransDict['TABLESPACES']['ONLINE']            = 'online'
+    TransDict['TABLESPACES']['OFFLINE_MODE']      = 'offlineMode'
+    TransDict['TABLESPACES']['READ_ONLY']         = 'readOnly'
+    TransDict['TABLESPACES']['TEMPORARY']         = 'temporary'
+    TransDict['TABLESPACES']['DEFAULT_TEMP']      = 'defaultTemp'
+    TransDict['TABLESPACES']['UNDO']              = 'undo'
+    TransDict['TABLESPACES']['LOCAL']             = 'local'
+    TransDict['TABLESPACES']['BLOCK_SIZE']        = 'blockSize'
+    TransDict['TABLESPACES']['ALLOCATION']        = 'allocation'
+    TransDict['TABLESPACES']['UNI_ALLOC_SIZE']    = 'uniAllocSize'
+    TransDict['TABLESPACES']['INIT_SIZE']         = 'initSize'
+    TransDict['TABLESPACES']['INCREMENT_PERCENT'] = 'incrementPercent'
+    TransDict['TABLESPACES']['MIN_EXTENDS']       = 'minExtends'
+    TransDict['TABLESPACES']['MAX_EXTENDS']       = 'maxExtends'
+    TransDict['TABLESPACES']['MIN_EXTENDS_SIZE']  = 'minExtendsSize'
+    TransDict['TABLESPACES']['LOGGING']           = 'logging'
+    TransDict['TABLESPACES']['RECOVERABLE']       = 'recoverable'
+    TransDict['TABLESPACES']['MAX_FREE_SPACE']    = 'maxFreeSpace'
+    TransDict['TABLESPACES']['AUTO_SEGMENT_MGMT'] = 'autoSegmentMgmt'
+    TransDict['TABLESPACES']['BIGFILE']           = 'bigfile'
+    TransDict['TABLESPACES']['NAME']              = 'name'
+    TransDict['TABLESPACES']['STATUS']            = 'status'
+    TransDict['TABLESPACES']['SIZE']              = 'size'
+    TransDict['TABLESPACES']['REUSE']             = 'reuse'
+    TransDict['TABLESPACES']['AUTOEXTEND']        = 'autoextend'
+    TransDict['TABLESPACES']['INCREMENT']         = 'increment'
+    TransDict['TABLESPACES']['MAX_SIZE']          = 'maxSize'
+    try:
+      Attr = TransDict['TABLESPACES'][Option]
+    except:
+      Attr = Option.lower()
+  else:
+    Attr = Option.lower()
+
+  return(Attr)
+# ---------------------------------------------------------------------------
+# End TranslateParm()
+# ---------------------------------------------------------------------------
+
+###! # ---------------------------------------------------------------------------
+###! # Def : RunDbca()
+###! # Desc: Calls DBCA to create a database from template.
+###! # Args:
+###! # Retn:
+###! # ---------------------------------------------------------------------------
+###! def RunDbca(Args):
+###!
+###!   # Call Dbca and create database...
+###!   proc = Popen(Args, bufsize=1, stdout=PIPE, stderr=STDOUT, shell=False, universal_newlines=True, close_fds=True)
+###!   #proc = Popen(['./RandyTest', '-xxxxx 123', '-yyyy 456'], bufsize=1, stdout=PIPE, stderr=STDOUT, shell=False, universal_newlines=True, close_fds=True)
+###!   while proc.poll() is None:
+###!     Stdout = proc.stdout.readline()
+###!     stdout.write(Stdout)
+###!     stdout.flush()
+###!   return(proc.returncode)
+###! # ---------------------------------------------------------------------------
+###! # End RunDbca()
+###! # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Def : LoadDefaults()
+# Desc: Creates a dictionary structures with default key=value pairs.
+# Args: None.
+# Retn: DefaultsDict = Dictionary containing default configuration properties
+# ---------------------------------------------------------------------------
+def LoadDefaults():
+  DefaultsDict                           = {}
+  DefaultsDict['CUSTOM_SCRIPTS']         = {}
+  DefaultsDict['DBSB']                   = {}
+  DefaultsDict['TABLESPACES']            = {}
+  DefaultsDict['DBCA_COMMAND_LINE']      = {}
+  DefaultsDict['MISC_PARAMETERS']        = {}
+  DefaultsDict['CONTROLFILE_ATTRIBUTES'] = {}
+  DefaultsDict['REDO']                   = {}
+  DefaultsDict['INIT_PARAMETERS']        = {}
+  DefaultsDict['COMMON_ATTRIBUTES']      = {}
+
+  # Default configuration parameters to fill in gaps in missing values in the config file.
+  DefaultsDict['DBSB']['description']           = 'DBCA Template -- Generated by DBSB'
+  DefaultsDict['DBSB']['name']                  = 'FireCAD Database'
+  DefaultsDict['DBSB']['oracle_base']           = '/u01/app/oracle'
+  DefaultsDict['DBSB']['oracle_home']           = '/u01/app/oracle/product/12.2.0.1/dbhome_1'
+  DefaultsDict['DBSB']['oracle_version']        = '12.2.0.1'
+  DefaultsDict['DBSB']['use_spfile']            = 'true'
+  DefaultsDict['DBSB']['data']                  = '+DATA'
+  DefaultsDict['DBSB']['reco']                  = '+RECO'
+
+  if(Trace):
+    print("\nDefaultsDict[DBSB]")
+    print('%-40s %-70s' % ('Parm', 'Value'))
+    print('%-40s %-70s' % ('----------------------------------------', '--------------------------------------------------'))
+    for parm in sorted(DefaultsDict['DBSB']):
+      print('%-40s %-70s' % (parm, DefaultsDict['DBSB'][parm]))
+
+  # Default dbca command line parameters to fill in gaps in missing values in the config file.
+  DefaultsDict['DBCA_COMMAND_LINE']['nodelist']                  = ['enkdb01','enkdb02']
+  DefaultsDict['DBCA_COMMAND_LINE']['storageType']               = 'ASM'
+  DefaultsDict['DBCA_COMMAND_LINE']['diskGroupName']             = DefaultsDict['DBSB']['data']
+  DefaultsDict['DBCA_COMMAND_LINE']['recoveryGroupName']         = DefaultsDict['DBSB']['reco']
+  DefaultsDict['DBCA_COMMAND_LINE']['sysPassword']               = 'welcome1'
+  DefaultsDict['DBCA_COMMAND_LINE']['systemPassword']            = 'welcome1'
+  DefaultsDict['DBCA_COMMAND_LINE']['dbsnmpPassword']            = 'welcome1'
+  DefaultsDict['DBCA_COMMAND_LINE']['databaseConfType']          = 'SI'
+  DefaultsDict['DBCA_COMMAND_LINE']['createAsContainerDatabase'] = 'FALSE'
+  DefaultsDict['DBCA_COMMAND_LINE']['emConfiguration']           = 'NONE'
+  DefaultsDict['DBCA_COMMAND_LINE']['dvConfiguration']           = 'FALSE'
+  DefaultsDict['DBCA_COMMAND_LINE']['olsConfiguration']          = 'FALSE'
+  DefaultsDict['DBCA_COMMAND_LINE']['runCVUChecks']              = 'FALSE'
+
+  if(Trace):
+    print("\nDefaultsDict[DBCA_COMMAND_LINE]")
+    print('%-40s %-70s' % ('Parm', 'Value'))
+    print('%-40s %-70s' % ('----------------------------------------', '--------------------------------------------------'))
+    for parm in sorted(DefaultsDict['DBCA_COMMAND_LINE']):
+      print('%-40s %-70s' % (parm,  DefaultsDict['DBCA_COMMAND_LINE'][parm]))
+
+  # Default misc. parameters to fill in gaps in missing values in the config file.
+  DefaultsDict['MISC_PARAMETERS']['maxUserConn']          = '2000'
+  DefaultsDict['MISC_PARAMETERS']['customSGA'         ]   = 'true'
+  DefaultsDict['MISC_PARAMETERS']['characterSet']         = 'WE8ISO8859P15'
+  DefaultsDict['MISC_PARAMETERS']['nationalCharacterSet'] = 'UTF8'
+  DefaultsDict['MISC_PARAMETERS']['archiveLogMode']       = 'false'
+
+  if(Trace):
+    print("\nDefaultsDict[MISC_PARAMETERS]")
+    print('%-40s %-70s' % ('Parm', 'Value'))
+    print('%-40s %-70s' % ('----------------------------------------', '--------------------------------------------------'))
+    for parm in sorted(DefaultsDict['MISC_PARAMETERS']):
+      print('%-40s %-70s' % (parm, DefaultsDict['MISC_PARAMETERS'][parm]))
+
+  # Default controlfile attributes to fill in gaps in missing values in the config file.
+  DefaultsDict['CONTROLFILE_ATTRIBUTES']['maxDatafiles']  = '32767'
+  DefaultsDict['CONTROLFILE_ATTRIBUTES']['maxLogfiles']   = '1024'
+  DefaultsDict['CONTROLFILE_ATTRIBUTES']['maxLogMembers'] = '5'
+  DefaultsDict['CONTROLFILE_ATTRIBUTES']['maxLogHistory'] = '32767'
+  DefaultsDict['CONTROLFILE_ATTRIBUTES']['maxInstances']  = '8'
+  DefaultsDict['CONTROLFILE_ATTRIBUTES']['filepath_1']    = DefaultsDict['DBSB']['data'] + '/{DB_UNIQUE_NAME}/'
+  DefaultsDict['CONTROLFILE_ATTRIBUTES']['filepath_2']    = DefaultsDict['DBSB']['reco'] + '/{DB_UNIQUE_NAME}/'
+  DefaultsDict['CONTROLFILE_ATTRIBUTES']['filepath_3']    = ''
+  DefaultsDict['CONTROLFILE_ATTRIBUTES']['filepath_4']    = ''
+  DefaultsDict['CONTROLFILE_ATTRIBUTES']['filepath_5']    = ''
+  DefaultsDict['CONTROLFILE_ATTRIBUTES']['filepath_6']    = ''
+  DefaultsDict['CONTROLFILE_ATTRIBUTES']['filepath_7']    = ''
+  DefaultsDict['CONTROLFILE_ATTRIBUTES']['filepath_8']    = ''
+  DefaultsDict['CONTROLFILE_ATTRIBUTES']['filepath_9']    = ''
+
+  if(Trace):
+    print("\nDefaultsDict[CONTROLFILE_ATTRIBUTES]")
+    print('%-40s %-70s' % ('Parm', 'Value'))
+    print('%-40s %-70s' % ('----------------------------------------', '--------------------------------------------------'))
+    for parm in sorted(DefaultsDict['CONTROLFILE_ATTRIBUTES']):
+      print('%-40s %-70s' % (parm, DefaultsDict['CONTROLFILE_ATTRIBUTES'][parm]))
+
+  # Default Redolog Defaults
+  DefaultsDict['REDO']['threads']       = '1'
+  DefaultsDict['REDO']['groups']        = '3'
+  DefaultsDict['REDO']['reuse']         = 'false'
+  DefaultsDict['REDO']['fileSize']      = '5M'
+  DefaultsDict['REDO']['memberPrefix']  = 'redo'
+  DefaultsDict['REDO']['members']       = '1'
+  DefaultsDict['REDO']['filePath']      = DefaultsDict['DBSB']['data'] + '/{DB_UNIQUE_NAME}/'
+
+  if(Trace):
+    print("\nDefaultsDict[REDO]")
+    print('%-40s %-70s' % ('Parm', 'Value'))
+    print('%-40s %-70s' % ('----------------------------------------', '--------------------------------------------------'))
+    for parm in sorted(DefaultsDict['REDO']):
+      print('%-40s %-70s' % (parm, DefaultsDict['REDO'][parm]))
+
+  # Default init.ora parameters to fill in gaps in missing values in the config file.
+  DefaultsDict['INIT_PARAMETERS']['_file_size_increase_increment']                = '2143289344'
+  DefaultsDict['INIT_PARAMETERS']['audit_file_dest']                              = '{ORACLE_BASE}/admin/{DB_UNIQUE_NAME/adump'
+  DefaultsDict['INIT_PARAMETERS']['audit_sys_operations']                         = 'true'
+  DefaultsDict['INIT_PARAMETERS']['audit_trail']                                  = 'db'
+  DefaultsDict['INIT_PARAMETERS']['compatible']                                   = '12.2.0.1.0'
+  ###~ DefaultsDict['INIT_PARAMETERS']['control_file_record_keep_time']                = '14'
+  DefaultsDict['INIT_PARAMETERS']['db_block_checking']                            = 'MEDIUM'
+  DefaultsDict['INIT_PARAMETERS']['db_block_checksum']                            = 'TYPICAL'
+  DefaultsDict['INIT_PARAMETERS']['db_block_size']                                = '8192'
+  DefaultsDict['INIT_PARAMETERS']['db_cache_size']                                = '12000M'
+  DefaultsDict['INIT_PARAMETERS']['db_create_file_dest']                          = DefaultsDict['DBSB']['data']
+  ###~ DefaultsDict['INIT_PARAMETERS']['db_domain']                                    = ''
+  ###~ DefaultsDict['INIT_PARAMETERS']['db_files']                                     = '2000'
+  ###~ DefaultsDict['INIT_PARAMETERS']['db_lost_write_protect']                        = 'TYPICAL'
+  DefaultsDict['INIT_PARAMETERS']['db_name']                                      = DbName
+  DefaultsDict['INIT_PARAMETERS']['db_recovery_file_dest']                        =  DefaultsDict['DBSB']['reco']
+  DefaultsDict['INIT_PARAMETERS']['db_recovery_file_dest_size']                   = '5000000M'
+  DefaultsDict['INIT_PARAMETERS']['db_unique_name']                               = DbUniqueName
+  DefaultsDict['INIT_PARAMETERS']['diagnostic_dest']                              = '{ORACLE_BASE}'
+  ###~ DefaultsDict['INIT_PARAMETERS']['fast_start_mttr_target']                       = '300'
+  ###~ DefaultsDict['INIT_PARAMETERS']['filesystemio_options']                         = 'SETALL'
+  ###~ DefaultsDict['INIT_PARAMETERS']['global_names']                                 = 'TRUE'
+  DefaultsDict['INIT_PARAMETERS']['java_pool_size']                               = '128M'
+  DefaultsDict['INIT_PARAMETERS']['large_pool_size']                              = '1024M'
+  ###~ DefaultsDict['INIT_PARAMETERS']['log_archive_format']                           = '%t_%s_%r.dbf'
+  DefaultsDict['INIT_PARAMETERS']['log_buffer']                                   = '134217728'
+  DefaultsDict['INIT_PARAMETERS']['open_cursors']                                 = '1000'
+  DefaultsDict['INIT_PARAMETERS']['optimizer_features_enable']                    = '12.2.0.1'
+  ###~ DefaultsDict['INIT_PARAMETERS']['os_authent_prefix']                            = ''
+  ###~ DefaultsDict['INIT_PARAMETERS']['parallel_adaptive_multi_user']                 = 'false'
+  ###~ DefaultsDict['INIT_PARAMETERS']['parallel_execution_message_size']              = '16K'
+  ###~ DefaultsDict['INIT_PARAMETERS']['parallel_force_local']                         = 'true'
+  ###~ DefaultsDict['INIT_PARAMETERS']['parallel_max_servers']                         = '64'
+  ###~ DefaultsDict['INIT_PARAMETERS']['parallel_min_servers']                         = '8'
+  ###~ DefaultsDict['INIT_PARAMETERS']['parallel_threads_per_cpu']                     = '1'
+  ###~ DefaultsDict['INIT_PARAMETERS']['pga_aggregate_target']                         = '10000M'
+  ###~ DefaultsDict['INIT_PARAMETERS']['pre_page_sga']                                 = 'false'
+  ###~ DefaultsDict['INIT_PARAMETERS']['processes']                                    = '1024'
+  DefaultsDict['INIT_PARAMETERS']['recyclebin']                                   = 'ON'
+  DefaultsDict['INIT_PARAMETERS']['remote_login_passwordfile']                    = 'exclusive'
+  ###~ DefaultsDict['INIT_PARAMETERS']['resource_limit']                               = 'true'
+  ###~ DefaultsDict['INIT_PARAMETERS']['resumable_timeout']                            = '14400'
+  ###~ DefaultsDict['INIT_PARAMETERS']['sec_protocol_error_further_action']            = '(DELAY] 30)'
+  ###~ DefaultsDict['INIT_PARAMETERS']['sec_protocol_error_trace_action']              = 'log'
+  ###~ DefaultsDict['INIT_PARAMETERS']['sessions']                                     = '1131'
+  DefaultsDict['INIT_PARAMETERS']['sga_max_size']                                 = '16G'
+  DefaultsDict['INIT_PARAMETERS']['shared_pool_size']                             = '2048M'
+  ###~ DefaultsDict['INIT_PARAMETERS']['sql92_security']                               = 'TRUE'
+  DefaultsDict['INIT_PARAMETERS']['streams_pool_size']                            = '256M'
+  DefaultsDict['INIT_PARAMETERS']['undo_retention']                               = '86400'
+  DefaultsDict['INIT_PARAMETERS']['undo_tablespace']                              = 'UNDOTBS'
+
+  if(Trace):
+    print("\nDefaultsDict[INIT_PARAMETERS]")
+    print('%-40s %-70s' % ('Parm', 'Value'))
+    print('%-40s %-70s' % ('----------------------------------------', '--------------------------------------------------'))
+    for parm in sorted(DefaultsDict['INIT_PARAMETERS']):
+      print('%-40s %-70s' % (parm, DefaultsDict['INIT_PARAMETERS'][parm]))
+
+  # Default common attributes to fill in gaps in missing values in the config file.
+  DefaultsDict['COMMON_ATTRIBUTES']['OMS']                                        = ['false']
+  DefaultsDict['COMMON_ATTRIBUTES']['JSERVER']                                    = ['false']
+  DefaultsDict['COMMON_ATTRIBUTES']['SPATIAL']                                    = ['false']
+  DefaultsDict['COMMON_ATTRIBUTES']['IMEDIA']                                     = ['false']
+  DefaultsDict['COMMON_ATTRIBUTES']['SAMPLE_SCHEMA']                              = ['false']
+  DefaultsDict['COMMON_ATTRIBUTES']['APEX']                                       = ['false']
+  DefaultsDict['COMMON_ATTRIBUTES']['OWB']                                        = ['false']
+  DefaultsDict['COMMON_ATTRIBUTES']['DV']                                         = ['false']
+  DefaultsDict['COMMON_ATTRIBUTES']['XDB_PROTOCOLS']                              = ['false', 'sysaux']
+  DefaultsDict['COMMON_ATTRIBUTES']['ORACLE_TEXT']                                = ['false', 'sysaux']
+  DefaultsDict['COMMON_ATTRIBUTES']['CWMLITE']                                    = ['false', 'sysaux']
+  DefaultsDict['COMMON_ATTRIBUTES']['EM_REPOSITORY']                              = ['false', 'sysaux']
+
+  if(Trace):
+    print("\nDefaultsDict[COMMON_ATTRIBUTES]")
+    print('%-40s %-70s' % ('Parm', 'Value'))
+    print('%-40s %-70s' % ('----------------------------------------', '--------------------------------------------------'))
+    for parm in sorted(DefaultsDict['COMMON_ATTRIBUTES']):
+      print('%-40s %-70s' % (parm, DefaultsDict['COMMON_ATTRIBUTES'][parm]))
+
+  # Default tablespace/datafile attributes to fill in gaps in missing values in the config file.
+  DefaultsDict['TABLESPACES']['SYSTEM'] = {}
+  DefaultsDict['TABLESPACES']['SYSTEM']['allocation']           = '3'
+  DefaultsDict['TABLESPACES']['SYSTEM']['autoSegmentMgmt']      = 'false'
+  DefaultsDict['TABLESPACES']['SYSTEM']['autoextend']           = 'true'
+  DefaultsDict['TABLESPACES']['SYSTEM']['bigfile']              = 'false'
+  DefaultsDict['TABLESPACES']['SYSTEM']['blockSize']            = '-1'
+  DefaultsDict['TABLESPACES']['SYSTEM']['defaultTemp']          = 'false'
+  DefaultsDict['TABLESPACES']['SYSTEM']['increment']            = '10M'
+  DefaultsDict['TABLESPACES']['SYSTEM']['increment']            = '64K'
+  DefaultsDict['TABLESPACES']['SYSTEM']['incrementPercent']     = '50'
+  DefaultsDict['TABLESPACES']['SYSTEM']['initSize']             = '64K'
+  DefaultsDict['TABLESPACES']['SYSTEM']['local']                = 'true'
+  DefaultsDict['TABLESPACES']['SYSTEM']['logging']              = 'true'
+  DefaultsDict['TABLESPACES']['SYSTEM']['maxExtends']           = '-1'
+  DefaultsDict['TABLESPACES']['SYSTEM']['maxFreeSpace']         = '0'
+  DefaultsDict['TABLESPACES']['SYSTEM']['maxSize']              = '-1M'
+  DefaultsDict['TABLESPACES']['SYSTEM']['minExtends']           = '1'
+  DefaultsDict['TABLESPACES']['SYSTEM']['minExtendsSize']       = '64K'
+  DefaultsDict['TABLESPACES']['SYSTEM']['name']                 = '{ORACLE_BASE}/oradata/{DB_UNIQUE_NAME}/system01.dbf'
+  DefaultsDict['TABLESPACES']['SYSTEM']['offlineMode']          = '1'
+  DefaultsDict['TABLESPACES']['SYSTEM']['online']               = 'true'
+  DefaultsDict['TABLESPACES']['SYSTEM']['readOnly']             = 'false'
+  DefaultsDict['TABLESPACES']['SYSTEM']['recoverable']          = 'false'
+  DefaultsDict['TABLESPACES']['SYSTEM']['reuse']                = 'true'
+  DefaultsDict['TABLESPACES']['SYSTEM']['size']                 = '700M'
+  DefaultsDict['TABLESPACES']['SYSTEM']['status']               = '0'
+  DefaultsDict['TABLESPACES']['SYSTEM']['temporary']            = 'false'
+  DefaultsDict['TABLESPACES']['SYSTEM']['undo']                 = 'false'
+  DefaultsDict['TABLESPACES']['SYSTEM']['uniAllocSize']         = '-1K'
+
+  DefaultsDict['TABLESPACES']['SYSAUX'] = {}
+  DefaultsDict['TABLESPACES']['SYSAUX']['allocation']           = '1'
+  DefaultsDict['TABLESPACES']['SYSAUX']['autoSegmentMgmt']      = 'false'
+  DefaultsDict['TABLESPACES']['SYSAUX']['autoextend']           = 'true'
+  DefaultsDict['TABLESPACES']['SYSAUX']['bigfile']              = 'false'
+  DefaultsDict['TABLESPACES']['SYSAUX']['blockSize']            = '-1'
+  DefaultsDict['TABLESPACES']['SYSAUX']['defaultTemp']          = 'false'
+  DefaultsDict['TABLESPACES']['SYSAUX']['increment']            = '10M'
+  DefaultsDict['TABLESPACES']['SYSAUX']['incrementPercent']     = '50'
+  DefaultsDict['TABLESPACES']['SYSAUX']['initSize']             = '64K'
+  DefaultsDict['TABLESPACES']['SYSAUX']['local']                = 'true'
+  DefaultsDict['TABLESPACES']['SYSAUX']['logging']              = 'true'
+  DefaultsDict['TABLESPACES']['SYSAUX']['maxExtends']           = '4096'
+  DefaultsDict['TABLESPACES']['SYSAUX']['maxFreeSpace']         = '0'
+  DefaultsDict['TABLESPACES']['SYSAUX']['maxSize']              = '-1M'
+  DefaultsDict['TABLESPACES']['SYSAUX']['minExtends']           = '1'
+  DefaultsDict['TABLESPACES']['SYSAUX']['minExtendsSize']       = '64K'
+  DefaultsDict['TABLESPACES']['SYSAUX']['name']                 = '{ORACLE_BASE}/oradata/{DB_UNIQUE_NAME}/sysaux01.dbf'
+  DefaultsDict['TABLESPACES']['SYSAUX']['offlineMode']          = '1'
+  DefaultsDict['TABLESPACES']['SYSAUX']['online']               = 'true'
+  DefaultsDict['TABLESPACES']['SYSAUX']['readOnly']             = 'false'
+  DefaultsDict['TABLESPACES']['SYSAUX']['recoverable']          = 'false'
+  DefaultsDict['TABLESPACES']['SYSAUX']['reuse']                = 'true'
+  DefaultsDict['TABLESPACES']['SYSAUX']['size']                 = '550M'
+  DefaultsDict['TABLESPACES']['SYSAUX']['status']               = '0'
+  DefaultsDict['TABLESPACES']['SYSAUX']['temporary']            = 'false'
+  DefaultsDict['TABLESPACES']['SYSAUX']['undo']                 = 'false'
+  DefaultsDict['TABLESPACES']['SYSAUX']['uniAllocSize']         = '-1K'
+
+  DefaultsDict['TABLESPACES']['USERS'] = {}
+  DefaultsDict['TABLESPACES']['USERS']['allocation']            = '1'
+  DefaultsDict['TABLESPACES']['USERS']['autoSegmentMgmt']       = 'true'
+  DefaultsDict['TABLESPACES']['USERS']['autoextend']            = 'true'
+  DefaultsDict['TABLESPACES']['USERS']['bigfile']               = 'false'
+  DefaultsDict['TABLESPACES']['USERS']['blockSize']             = '-1'
+  DefaultsDict['TABLESPACES']['USERS']['defaultTemp']           = 'false'
+  DefaultsDict['TABLESPACES']['USERS']['increment']             = '10M'
+  DefaultsDict['TABLESPACES']['USERS']['incrementPercent']      = '0'
+  DefaultsDict['TABLESPACES']['USERS']['initSize']              = '128K'
+  DefaultsDict['TABLESPACES']['USERS']['local']                 = 'true'
+  DefaultsDict['TABLESPACES']['USERS']['logging']               = 'true'
+  DefaultsDict['TABLESPACES']['USERS']['maxExtends']            = '4096'
+  DefaultsDict['TABLESPACES']['USERS']['maxFreeSpace']          = '0'
+  DefaultsDict['TABLESPACES']['USERS']['maxSize']               = '-1M'
+  DefaultsDict['TABLESPACES']['USERS']['minExtends']            = '1'
+  DefaultsDict['TABLESPACES']['USERS']['minExtendsSize']        = '128K'
+  DefaultsDict['TABLESPACES']['USERS']['name']                  = '{ORACLE_BASE}/oradata/{DB_UNIQUE_NAME}/users01.dbf'
+  DefaultsDict['TABLESPACES']['USERS']['offlineMode']           = '1'
+  DefaultsDict['TABLESPACES']['USERS']['online']                = 'true'
+  DefaultsDict['TABLESPACES']['USERS']['readOnly']              = 'false'
+  DefaultsDict['TABLESPACES']['USERS']['recoverable']           = 'false'
+  DefaultsDict['TABLESPACES']['USERS']['reuse']                 = 'true'
+  DefaultsDict['TABLESPACES']['USERS']['size']                  = '5M'
+  DefaultsDict['TABLESPACES']['USERS']['status']                = '0'
+  DefaultsDict['TABLESPACES']['USERS']['temporary']             = 'false'
+  DefaultsDict['TABLESPACES']['USERS']['undo']                  = 'false'
+  DefaultsDict['TABLESPACES']['USERS']['uniAllocSize']          = '-1K'
+
+  DefaultsDict['TABLESPACES']['TEMP'] = {}
+  DefaultsDict['TABLESPACES']['TEMP']['allocation']             = '1'
+  DefaultsDict['TABLESPACES']['TEMP']['autoSegmentMgmt']        = 'true'
+  DefaultsDict['TABLESPACES']['TEMP']['autoextend']             = 'true'
+  DefaultsDict['TABLESPACES']['TEMP']['bigfile']                = 'false'
+  DefaultsDict['TABLESPACES']['TEMP']['blockSize']              = '-1'
+  DefaultsDict['TABLESPACES']['TEMP']['defaultTemp']            = 'true'
+  DefaultsDict['TABLESPACES']['TEMP']['increment']              = '640K'
+  DefaultsDict['TABLESPACES']['TEMP']['incrementPercent']       = '0'
+  DefaultsDict['TABLESPACES']['TEMP']['initSize']               = '64K'
+  DefaultsDict['TABLESPACES']['TEMP']['local']                  = 'true'
+  DefaultsDict['TABLESPACES']['TEMP']['logging']                = 'true'
+  DefaultsDict['TABLESPACES']['TEMP']['maxExtends']             = '0'
+  DefaultsDict['TABLESPACES']['TEMP']['maxFreeSpace']           = '0'
+  DefaultsDict['TABLESPACES']['TEMP']['maxSize']                = '-1M'
+  DefaultsDict['TABLESPACES']['TEMP']['minExtends']             = '1'
+  DefaultsDict['TABLESPACES']['TEMP']['minExtendsSize']         = '64K'
+  DefaultsDict['TABLESPACES']['TEMP']['name']                   = '{ORACLE_BASE}/oradata/{DB_UNIQUE_NAME}/temp01.dbf'
+  DefaultsDict['TABLESPACES']['TEMP']['offlineMode']            = '1'
+  DefaultsDict['TABLESPACES']['TEMP']['online']                 = 'true'
+  DefaultsDict['TABLESPACES']['TEMP']['readOnly']               = 'false'
+  DefaultsDict['TABLESPACES']['TEMP']['recoverable']            = 'false'
+  DefaultsDict['TABLESPACES']['TEMP']['reuse']                  = 'true'
+  DefaultsDict['TABLESPACES']['TEMP']['size']                   = '20M'
+  DefaultsDict['TABLESPACES']['TEMP']['status']                 = '0'
+  DefaultsDict['TABLESPACES']['TEMP']['temporary']              = 'true'
+  DefaultsDict['TABLESPACES']['TEMP']['undo']                   = 'false'
+  DefaultsDict['TABLESPACES']['TEMP']['uniAllocSize']           = '-1K'
+
+  DefaultsDict['TABLESPACES']['UNDOTBS'] = {}
+  DefaultsDict['TABLESPACES']['UNDOTBS']['allocation']          = '1'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['autoSegmentMgmt']     = 'false'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['autoextend']          = 'true'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['bigfile']             = 'false'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['blockSize']           = '-1'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['defaultTemp']         = 'false'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['increment']           = '5M'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['incrementPercent']    = '50'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['initSize']            = '512K'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['local']               = 'true'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['logging']             = 'true'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['maxExtends']          = '4096'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['maxFreeSpace']        = '0'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['maxSize']             = '-1M'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['minExtends']          = '8'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['minExtendsSize']      = '512K'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['name']                = '{ORACLE_BASE}/oradata/{DB_UNIQUE_NAME}/undotbs101.dbf'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['offlineMode']         = '1'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['online']              = 'true'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['readOnly']            = 'false'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['recoverable']         = 'false'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['reuse']               = 'true'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['size']                = '200M'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['status']              = '0'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['temporary']           = 'false'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['undo']                = 'true'
+  DefaultsDict['TABLESPACES']['UNDOTBS']['uniAllocSize']        = '-1K'
+
+  if(Trace):
+    print("\nDefaultsDict[TABLESPACES]")
+    for tsname in sorted(DefaultsDict['TABLESPACES']):
+      print('%-10s %-20s %-70s' % ('Tablespace', 'Parm', 'Value'))
+      print('%-10s %-20s %-70s' % ('----------', '--------------------', '----------------------------------------------------------------------'))
+      for parm in sorted(DefaultsDict['TABLESPACES'][tsname]):
+        print('%-10s %-20s %-70s' % (tsname, parm, DefaultsDict['TABLESPACES'][tsname][parm]))
+      print("")
+
+  return(DefaultsDict)
+# ---------------------------------------------------------------------------
+# End LoadDefaults()
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Def : LoadParfile()
+# Desc: Loads dictionary structures with key/value pairs from a parameter
+#       file.
+# Args: ParFile = the name of the parameter file.
+# Retn: MergeDict = Dictionary containing configuration properties.
+# ---------------------------------------------------------------------------
+def LoadParfile(ParFile):
+  Parms      = SafeConfigParser()
+  ConfigDict = {}
+  ValidParms = {}
+
+  ValidParms['DBSB'] = (
+     'name'
+    ,'description'
+    ,'oracle_version'
+    ,'use_spfile'
+    ,'oracle_home'
+    ,'oracle_base'
+    ,'data'
+    ,'reco'
+  )
+
+  ValidParms['DBCA_COMMAND_LINE'] = (
+     'template_name'
+    ,'node_list'
+    ,'storage_type'
+    ,'sys_password'
+    ,'system_password'
+    ,'dbsnmp_password'
+    ,'database_conf_type'
+    ,'create_as_container_database'
+    ,'em_configuration'
+    ,'dv_configuration'
+    ,'ols_configuration'
+    ,'run_cvu_checks'
+  )
+
+  ValidParms['MISC_PARAMETERS'] = (
+     'max_user_conn'
+    ,'custom_sga'
+    ,'character_set'
+    ,'national_character_set'
+    ,'archivelog_mode'
+  )
+
+  ValidParms['COMMON_ATTRIBUTES'] = (
+     'oms'
+    ,'jserver'
+    ,'spatial'
+    ,'imedia'
+    ,'xdb_protocols'
+    ,'oracle_text'
+    ,'sample_schema'
+    ,'cwmlite'
+    ,'em_repository'
+    ,'apex'
+    ,'owb'
+    ,'dv'
+  )
+
+  ValidParms['CONTROLFILE_ATTRIBUTES'] = (
+     'max_data_files'
+    ,'max_log_files'
+    ,'max_log_members'
+    ,'max_log_history'
+    ,'max_instances'
+    ,'filepath_1'
+    ,'filepath_2'
+    ,'filepath_3'
+    ,'filepath_4'
+    ,'filepath_5'
+    ,'filepath_6'
+  )
+
+  ValidParms['CUSTOM_SCRIPTS'] = (
+     'script1'
+    ,'script2'
+    ,'script3'
+    ,'script4'
+    ,'script5'
+    ,'script6'
+    ,'script7'
+    ,'script8'
+    ,'script9'
+    ,'script10'
+    ,'script11'
+    ,'script12'
+    ,'script13'
+    ,'script14'
+    ,'script15'
+    ,'script16'
+    ,'script17'
+    ,'script18'
+    ,'script19'
+    ,'script20'
+  )
+
+  ValidParms['TABLESPACES'] = (
+     'allocation'
+    ,'autoextend'
+    ,'auto_segment_mgmt'
+    ,'bigfile'
+    ,'block_size'
+    ,'default_temp'
+    ,'increment'
+    ,'increment'
+    ,'increment_percent'
+    ,'init_size'
+    ,'local'
+    ,'logging'
+    ,'max_extends'
+    ,'max_free_space'
+    ,'max_size'
+    ,'min_extends'
+    ,'min_extends_size'
+    ,'name'
+    ,'offline_mode'
+    ,'online'
+    ,'online'
+    ,'read_only'
+    ,'recoverable'
+    ,'reuse'
+    ,'size'
+    ,'status'
+    ,'temporary'
+    ,'temporary'
+    ,'undo'
+    ,'uni_alloc_size'
+  )
+
+  ValidParms['REDO'] = (
+    'threads'
+   ,'groups'
+   ,'members'
+   ,'reuse'
+   ,'file_size'
+   ,'file_path'
+  )
+
+  ValidParms['INIT_PARAMETERS'] = (
+     '_file_size_increase_increment'
+    ,'db_cache_size'
+    ,'db_keep_cache_size'
+    ,'java_pool_size'
+    ,'large_pool_size'
+    ,'pga_aggregate_target'
+    ,'sga_max_size'
+    ,'shared_pool_size'
+    ,'streams_pool_size'
+    ,'audit_file_dest'
+    ,'audit_sys_operations'
+    ,'audit_trail'
+    ,'compatible'
+    ,'control_file_record_keep_time'
+    ,'control_files'
+    ,'db_block_checking'
+    ,'db_block_checksum'
+    ,'db_block_size'
+    ,'db_create_file_dest'
+    ,'db_create_online_log_dest_1'
+    ,'db_create_online_log_dest_2'
+    ,'db_create_online_log_dest_3'
+    ,'db_domain'
+    ,'db_files'
+    ,'db_lost_write_protect'
+    ,'db_name'
+    ,'db_recovery_file_dest'
+    ,'db_recovery_file_dest_size'
+    ,'diagnostic_dest'
+    ,'dispatchers'
+    ,'fast_start_mttr_target'
+    ,'filesystemio_options'
+    ,'global_names'
+    ,'log_archive_format'
+    ,'log_buffer'
+    ,'open_cursors'
+    ,'optimizer_features_enable'
+    ,'os_authent_prefix'
+    ,'parallel_adaptive_multi_user'
+    ,'parallel_execution_message_size'
+    ,'parallel_force_local'
+    ,'parallel_max_servers'
+    ,'parallel_min_servers'
+    ,'parallel_threads_per_cpu'
+    ,'pre_page_sga'
+    ,'processes'
+    ,'recyclebin'
+    ,'remote_login_passwordfile'
+    ,'resource_limit'
+    ,'resumable_timeout'
+    ,'sec_protocol_error_further_action'
+    ,'sec_protocol_error_trace_action'
+    ,'sessions'
+    ,'sql92_security'
+    ,'undo_retention'
+    ,'undo_tablespace'
+  )
+
+  # make the items in the config file case sensitive...
+  # This is important only because of the weird way the MiscParameters section
+  # of the dbca template uses the Options as field delimiters in the XML document.
+  Parms.optionxform = str
+
+  if (ParFile == ''):
+    pass
+  else:
+    # Load the parameter file.
+    # -----------------------------
+    try:
+      Parms.read(ParFile)
+    except:
+      PrintMessage('error', 'Parsing error in parameter file: %s\nFor more information turn on the trace option (--t)' % ParFile)
+      if(Trace):
+        print('\n%s' % traceback.format_exc())
+      exit(1)
+
+    # Load configuration parameters and merge them with defaults.
+    # ------------------------------------------------------------
+    for Section in sorted(Parms.sections()):
+      Section = Section.upper()
+      if (Section in DefaultsDict):
+        ConfigDict[Section] = {}
+      for Option in sorted(Parms.options(Section)):
+        Option = Option.lower()
+        Value = Parms.get(Section, Option)
+        Value = Value.strip()
+        if (Section == 'TABLESPACES'):
+          TbsName = ''
+          try:
+            (TbsName, Option) = Option.split('.')
+            TbsName = TbsName.upper()
+          except:
+            continue
+          if (Option in ValidParms[Section]):
+            Option = TranslateParm(Section, Option)
+            if(TbsName not in ConfigDict[Section]):
+              ConfigDict[Section][TbsName ] = {}
+            ConfigDict[Section][TbsName][Option] = Value
+          else:
+            PrintMessage('error', 'Invalid Option in Parfile: [' + Section + '] ' + Option)
+            exit(1)
+        else:
+          if (Option in ValidParms[Section]):
+            Option = TranslateParm(Section, Option)
+            if (Section == 'COMMON_ATTRIBUTES'):
+              Value = ''.join(Value.split(' ')).split(',')
+            elif (Section == 'DBSB'):
+              if (Option == 'data'):
+                DataDest = Value
+              if (Option == 'reco'):
+                RecoDest = Value
+            elif (Section == 'DBCA_COMMAND_LINE'):
+              if (Option == 'nodelist'):
+                Value = ''.join(Value.split(' ')).split(',')
+            else:
+              pass
+            if(Section not in ConfigDict):
+              ConfigDict[Section] = {}
+            ConfigDict[Section][Option] = Value
+          else:
+            PrintMessage('error', 'Invalid Option in Parfile: [' + Section + '] ' + Option)
+            exit(1)
+
+  return(ConfigDict)
+# ---------------------------------------------------------------------------
+# End LoadParfile()
+# ---------------------------------------------------------------------------
+
+def Merge(Source, Dest):
+
+  for key, value in Source.items():
+      if isinstance(value, dict):
+          # get node or create one
+          node = Dest.setdefault(key, {})
+          Merge(value, node)
+      else:
+          Dest[key] = value
+  return Dest
+
+# ---------------------------------------------------------------------------
+# Def : MergeParms()
+# Desc: Merges default key/values with parfile key/values where parfile is
+#       missing key/values.
+# Args: ParmsDict = dictionary of key/values from parfile.
+#       DefaultDict = dictionary of default key/values.
+# Retn: ConfigDict = Dictionary containing configuration properties.
+# ---------------------------------------------------------------------------
+def MergeParms(ConfigDict, DefaultsDict):
+  MergeDict = DefaultsDict.copy()
+  MergeDict = Merge(ConfigDict,MergeDict)
+  DataDest  = MergeDict['DBSB']['data']
+  RecoDest  = MergeDict['DBSB']['reco']
+
+  MergeDict['INIT_PARAMETERS']['db_create_file_dest']   = DataDest
+  MergeDict['INIT_PARAMETERS']['db_recovery_file_dest'] = RecoDest
+  MergeDict['DBCA_COMMAND_LINE']['gdbName']             = DbUniqueName
+  MergeDict['DBCA_COMMAND_LINE']['sid']                 = DbName
+  MergeDict['DBCA_COMMAND_LINE']['initParams']          = "'db_unique_name=" + DbUniqueName + "'"
+  MergeDict['DBCA_COMMAND_LINE']['diskGroupName']       = DataDest
+  MergeDict['DBCA_COMMAND_LINE']['recoveryGroupName']   = RecoDest
+  MergeDict['MISC_PARAMETERS']['initParamFileName']     = DefaultsDict['DBSB']['oracle_base'] + '/admin/' + DbUniqueName + '/pfile/init' + DbName + '.ora'
+
+  # Global Replacements here...
+  for Section in sorted(MergeDict):
+    print(Section)
+    if (Section == 'TABLESPACES'):
+      for TbsName in MergeDict[Section]:
+        for Option in MergeDict[Section][TbsName]:
+          Value = MergeDict[Section][TbsName][Option]
+          if (type(Value) == type(list())):
+            NewValue = []
+            for v in Value:
+              if (v.find('{DATA}') >= 0):
+                NewValue.append(v.replace('{DATA}', DataDest))
+              elif (v.find('{RECO}') >= 0):
+                NewValue.append(v.replace('{RECO}', RecoDest))
+              elif (v.find('{DB_NAME}') >= 0):
+                NewValue.append(v.replace('{DB_NAME}', DbName))
+              elif (v.find('{DB_UNIQUE_NAME}') >= 0):
+                NewValue.append(v.replace('{DB_UNIQUE_NAME}', DbUniqueName))
+              else:
+                Value.append(v)
+          else:
+            if (Value.find('{DATA}') >= 0):
+              Value = Value.replace('{DATA}', DataDest)
+            elif (Value.find('{RECO}') >= 0):
+              Value = Value.replace('{RECO}', RecoDest)
+            elif (Value.find('{DB_NAME}') >= 0):
+              Value = Value.replace('{DB_NAME}', DbName)
+            elif (Value.find('{DB_UNIQUE_NAME}') >= 0):
+              Value = Value.replace('{DB_UNIQUE_NAME}', DbUniqueName)
+          MergeDict[Section][TbsName][Option] = Value
+    else:
+      for Option in sorted(MergeDict[Section]):
+        Value = MergeDict[Section][Option]
+        if (Value == [] or Value == () or Value == ''):           # remove all options with no value.
+          del MergeDict[Section][Option]
+          continue
+        else:
+          if (type(Value) == type(list())):
+            NewValue = []
+            for v in Value:
+              if (v.find('{DATA}') >= 0):
+                NewValue.append(v.replace('{DATA}', DataDest))
+              elif (v.find('{RECO}') >= 0):
+                NewValue.append(v.replace('{RECO}', RecoDest))
+              elif (v.find('{DB_NAME}') >= 0):
+                NewValue.append(v.replace('{DB_NAME}', DbName))
+              elif (v.find('{DB_UNIQUE_NAME}') >= 0):
+                NewValue.append(v.replace('{DB_UNIQUE_NAME}', DbUniqueName))
+              else:
+                NewValue.append(v)
+          else:
+            if (Value.find('{DATA}') >= 0):
+              Value = Value.replace('{DATA}', DataDest)
+            if (Value.find('{RECO}') >= 0):
+              Value = Value.replace('{RECO}', RecoDest)
+            if (Value.find('{DB_NAME}') >= 0):
+              Value = Value.replace('{DB_NAME}', DbName)
+            if (Value.find('{DB_UNIQUE_NAME}') >= 0):
+              Value = Value.replace('{DB_UNIQUE_NAME}', DbUniqueName)
+          MergeDict[Section][Option] = Value
+
+  if(Trace):
+    for Section in sorted(MergeDict):
+      if (Section != 'TABLESPACES'):
+        print("\nMergeDict[%s]" % Section)
+        print('\n%-60s %-70s' % ('Parm', 'Value'))
+        print('%-60s %-70s' % ('------------------------------------------------------------', '----------------------------------------------------------------------'))
+        for parm in sorted(MergeDict[Section]):
+          print('%-60s %-70s' % (parm, MergeDict[Section][parm]))
+
+  # Validate Attribute Values and give meaningful helps where needed.
+  # ------------------------------------------------------------------
+  for Section in sorted(MergeDict):
+    if (Section == 'TABLESPACES'):
+      for TbsName in sorted(MergeDict[Section]):
+        for Attr in sorted(MergeDict[Section][TbsName]):
+          if (Attr in ('online','readOnly','temporary','defaultTemp','undo','local','logging','recoverable','autoSegmentMgmt','bigfile','online','reuse','autoextend')):
+            if (MergeDict[Section][TbsName][Attr].upper() not in ('TRUE','FALSE','')):
+              PrintMessage('error', Attr + ' must be one of: TRUE, FALSE, "".')
+              exit(1)
+          if (Attr in ('offlineMode','allocation','uniAllocSize','initSize','increment','incrementPercent','minExtends','maxExtends','minExtendsSize','maxFreeSpace','status','size','increment','maxSize')):
+            if (MergeDict[Section][TbsName][Attr].upper()[-1] in ('K','M','G','T')):
+              Val = MergeDict[Section][TbsName][Attr][0:-1]
+              try:
+                Val = int(Val)
+              except:
+                PrintMessage('error', Attr + ' must be of type int')
+                exit(1)
+          if (Attr == 'blockSize'):
+            if (MergeDict[Section][TbsName][Attr] not in ('4096','8192','16384','-1')):
+              PrintMessage('error', Attr + ' must be one of: 4096, 8192, 16384, -1')
+              exit(1)
+    elif (Section == 'DBSB'):
+      for Attr in sorted(MergeDict[Section]):
+        if (Attr == 'use_spfile'):
+          if (MergeDict[Section][Attr].upper() not in ('TRUE','FALSE','')):
+            PrintMessage('error', Attr + ' must be one of: TRUE, FALSE, "".')
+    elif (Section == 'DBCA_COMMAND_LINE'):
+      for Attr in sorted(MergeDict[Section]):
+        if (Attr == 'databaseConfType'):
+          if (MergeDict[Section][Attr].upper() not in ('RAC','SI')):
+            PrintMessage('error', Attr + ' must be one of: RAC or SI.')
+            exit(1)
+          else:
+            if (Attr == 'nodelist'):
+              if (MergeDict[Section]['databaseConfType'].upper() == 'RAC'):
+                NodeList = []
+                try:
+                  NodeList = MergeDict[Section][Attr]
+                except:
+                  pass
+                if (NodeList.len() < 2):
+                  PrintMessage('error', Attr + ' must be a comma delimited list of nodes, and must be of count > 1.')
+                  exit(1)
+        elif (Attr == 'storageType'):
+          if (MergeDict[Section][Attr].upper() not in ('FS','CFS','ASM')):
+            PrintMessage('error', Attr + ' must be one of: FS, CFS, or ASM. Found: ' + MergeDict[Section][Attr].upper())
+            exit(1)
+
+          if (MergeDict['INIT_PARAMETERS']['db_recovery_file_dest_size'] == ''):
+            PrintMessage('error', 'init.ora parameter, db_recovery_file_dest_size may not be blank.')
+            exit(1)
+        elif (Attr == 'emConfiguration'):
+          if (MergeDict[Section][Attr].upper() not in ('NONE','')):
+            PrintMessage('error', Attr + ' must be one of: NONE, "".')
+            exit(1)
+        elif (Attr in ('dvConfiguration','olsConfiguration','createAsContainerDatabase','runCVUChecks')):
+          if (MergeDict[Section][Attr].upper() not in ('TRUE','FALSE','')):
+            PrintMessage('error', Attr + ' must be one of: TRUE, FALSE, "".')
+            exit(1)
+    elif (Section in ('MISC_PARAMETERS')):
+        #if (Attr == 'databaseType'):
+        #  if (MergeDict[Section][Attr].upper() not in ('MULTIPURPOSE','DATA_WAREHOUSING','OLTP','')):
+        #    PrintMessage('error', Attr + ' must be one of: MULTIPURPOSE, DATA_WAREHOUSING, OLTP, "".')
+        #    exit(1)
+        if (Attr in ('maxUserConn','percentageMemTOSGA')):
+          try:
+            junk = int(MergeDict[Section][Attr])
+          except:
+            PrintMessage('error', Attr + ' must be of type int.')
+            exit(1)
+        elif (Attr in ('customSGA','archiveLogMode')):
+          if (MergeDict[Section][Attr].upper() not in ('TRUE','FALSE','')):
+            PrintMessage('error', Attr + ' must be one of: TRUE, FALSE, "".')
+            exit(1)
+    elif (Section in ('COMMON_ATTRIBUTES')):
+      for Attr in sorted(MergeDict[Section]):
+        if (MergeDict[Section][Attr][0].upper() not in ('TRUE','FALSE','')):
+          PrintMessage('error', Attr + ' must be one of: TRUE, FALSE, "".')
+          exit(1)
+        if (Attr.upper() in ('XDB_PROTOCOLS','ORACLE_TEXT','CWMLITE','EM_REPOSITORY')):
+          OptList = MergeDict[Section][Attr]
+          if (len(OptList) > 1):
+            Tbsp = OptList[1].upper()
+            if Tbsp not in (MergeDict['TABLESPACES']):
+              PrintMessage('error', Tbsp + ' not found in the tablespaces section of the parameter file.')
+              exit(1)
+          else:
+            PrintMessage('error', 'Tablespace required for ' + Attr)
+            exit(1)
+
+  for TbsName in MergeDict['TABLESPACES']:
+    MergeDict['TABLESPACES'][TbsName]['name'] = DataDest + '/' + DbUniqueName + '/' + MergeDict['TABLESPACES'][TbsName]['name']
+
+  for Option in MergeDict['REDO']:
+    MergeDict['REDO']['filePath'] = DataDest
+
+  for Option in MergeDict['CONTROLFILE_ATTRIBUTES']:
+    if (Option[0:-1] == 'filepath_' and MergeDict['CONTROLFILE_ATTRIBUTES'][Option] != ''):
+      if (MergeDict['CONTROLFILE_ATTRIBUTES'][Option][0:len(DataDest)] != DataDest):
+        if (MergeDict['CONTROLFILE_ATTRIBUTES'][Option][0:len(RecoDest)] != RecoDest):
+          MergeDict['CONTROLFILE_ATTRIBUTES'][Option] = DataDest
+
+  # For RAC Databases we need to remove the single the UNDO tablespace from the condigration
+  # and if an UNDO tabespace isn't defined in the parfile for each instance we need to
+  # create it here. Also need to reset the number of threads for the redologs.
+  # ------------------------------------------------------------------------------------------
+  if (MergeDict['DBCA_COMMAND_LINE']['databaseConfType'].upper() == 'RAC'):
+    NodeList = MergeDict['DBCA_COMMAND_LINE']['nodelist']
+    NodeCount = len(NodeList)
+    MergeDict['REDO']['threads'] = str(NodeCount)
+
+    for i in range(NodeCount):
+      TbsName = 'UNDOTBS' + str(i+1)
+
+      if (TbsName not in MergeDict['TABLESPACES']):
+        MergeDict['TABLESPACES'][TbsName] = {}
+        for Attr in DefaultsDict['TABLESPACES']['UNDOTBS']:
+          MergeDict['TABLESPACES'][TbsName][Attr] = DefaultsDict['TABLESPACES']['UNDOTBS'][Attr]
+
+    del MergeDict['TABLESPACES']['UNDOTBS']
+
+  if (Trace):
+    print('\nOMF                     Value')
+    print('----------------------  --------------------------------------------')
+    print('DataDest                %s' % DataDest)
+    print('RecoDest                %s' % RecoDest)
+    print('diskGroupName           %s' % MergeDict['DBCA_COMMAND_LINE']['diskGroupName'])
+    print('recoveryGroupName       %s' % MergeDict['DBCA_COMMAND_LINE']['recoveryGroupName'])
+    print('db_create_file_dest     %s' % MergeDict['INIT_PARAMETERS']['db_create_file_dest'])
+    print('db_recovery_file_dest   %s' % MergeDict['INIT_PARAMETERS']['db_recovery_file_dest'])
+    for Section in sorted(MergeDict):
+      if (Section == 'TABLESPACES'):
+        print('\nDatafiles:')
+        for TbsName in sorted(MergeDict[Section]):
+          for Option in sorted(MergeDict[Section][TbsName]):
+            if (Option == 'name'):
+              print('  %-20s  %-20s' % (TbsName, MergeDict[Section][TbsName]['name']))
+      if (Section == 'CONTROLFILE_ATTRIBUTES'):
+        print('\nControlfiles:')
+        for Option in sorted(MergeDict[Section]):
+          if (Option[0:-1] == 'filepath_' and MergeDict[Section][Option] != ''):
+            print('  %-20s  %-20s' % (Option, MergeDict[Section][Option]))
+      if (Section == 'REDO'):
+        print('\nRedologs:')
+        for Option in sorted(MergeDict[Section]):
+          if (Option == 'filePath' and MergeDict[Section][Option] != ''):
+            print('  %-20s  %-20s' % (Option, MergeDict[Section][Option]))
+
+  return(MergeDict)
+# ---------------------------------------------------------------------------
+# End MergeParms()
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Def : GenerateTemplate()
+# Desc: Generates an XML template for dbca silent build.
+# Args: Dictionary of configuration, Dictionary of Default Tablespce/datafile
+#       values
+# Retn: None.
+# ---------------------------------------------------------------------------
+def GenerateTemplate(ConfigDict,TbspDefaults):
+  OraVers       = ConfigDict['DBSB']['oracle_version']
+  TemplateName  = ConfigDict['DBSB']['name']
+  TemplateDesc  = ConfigDict['DBSB']['description']
+  UseSpfile     = ConfigDict['DBSB']['use_spfile'].upper()
+  TemplateData  = ''
+
+  TemplateData  +=  '<DatabaseTemplate name="%s" description="%s" version="%s">\n' % (TemplateName,TemplateDesc,OraVers)
+
+  # CommonAttributes Section of the Template
+  # -----------------------------------------
+  TemplateData  +=  '   <CommonAttributes>\n'
+  for Attr in sorted(ConfigDict['COMMON_ATTRIBUTES'].keys()):
+    Value  = ConfigDict['COMMON_ATTRIBUTES'][Attr][0]
+    if(len(ConfigDict['COMMON_ATTRIBUTES'][Attr]) > 1):
+      TbsName = ConfigDict['COMMON_ATTRIBUTES'][Attr][1].upper()
+      TemplateData += '      <option name="%s" value="%s">\n' % (Attr, Value)
+      TemplateData += '         <tablespace id="%s"/>\n' % TbsName
+      TemplateData += '      </option>\n'
+  TemplateData += '   </CommonAttributes>\n'
+  TemplateData += '   <Variables>\n'
+  TemplateData += '   </Variables>\n'
+
+  # CustomScripts Section of the Template
+  # ---------------------------------------
+  if(ConfigDict['CUSTOM_SCRIPTS'] == {}):
+    TemplateData += '   <CustomScripts Execute="false"/>\n'
+  else:
+    TemplateData += '   <CustomScripts Execute="true">\n'
+    for Id in sorted(ConfigDict['CUSTOM_SCRIPTS'].keys()):
+      FilePath = ConfigDict['CUSTOM_SCRIPTS'][Id].strip()
+      TemplateData += '      <CustomScript script="%s"/>\n' % FilePath
+    TemplateData += '   </CustomScripts>\n'
+
+  TemplateData += '   <InitParamAttributes>\n'
+
+  # InitParams Section of the Template
+  # ------------------------------------
+  TemplateData += '      <InitParams>\n'
+  for Parm in sorted(ConfigDict['INIT_PARAMETERS'].keys()):
+    Value = ''
+    Unit = ''
+    Value = ConfigDict['INIT_PARAMETERS'][Parm].strip()
+    if (len(Value) > 1):
+      if (Value[-1].upper() in ('K','M','G')):
+        junk = Value[0:-1]
+        try:
+          junk = int(junk)
+          junk = str(junk)
+          Unit = Value[-1].upper() + 'B'
+          Value = junk
+        except:
+          pass
+    if (Unit != ''):
+      TemplateData += '         <initParam name="%s" value="%s" unit="%s"/>\n' % (Parm.lower(), Value, Unit)
+    else:
+      TemplateData += '         <initParam name="%s" value="%s"/>\n' % (Parm.lower(), Value)
+  TemplateData += '      </InitParams>\n'
+
+  # MiscParams Section of the Template
+  TemplateData  +=  '      <MiscParams>\n'
+  for Parm in sorted(ConfigDict['MISC_PARAMETERS'].keys()):
+    Value = ConfigDict['MISC_PARAMETERS'][Parm].strip()
+    TemplateData += '         <%s>%s</%s>\n' % (Parm, Value, Parm)
+  TemplateData += '      </MiscParams>\n'
+  TemplateData += '      <SPfile useSPFile="%s">%s/dbs/spfile%s.ora</SPfile>\n' % (UseSpfile.lower(),ConfigDict['DBSB']['oracle_home'], DbUniqueName)
+                        #<SPfile useSPFile="true">/u02/data/CADDEV1/spfileCADDEV1.ora</SPfile>
+                        #<SPfile useSPFile="true">{ORACLE_HOME}/dbs/spfile{SID}.ora</SPfile>
+  TemplateData += '   </InitParamAttributes>\n'
+  TemplateData += '   <StorageAttributes>\n'
+
+  # Controlfiles Section of the Template
+  # ------------------------------------
+  TemplateData  +=  '      <ControlfileAttributes id="Controlfile">\n'
+  CfId = -1
+  for Attr in sorted(ConfigDict['CONTROLFILE_ATTRIBUTES'].keys()):
+    Value = ConfigDict['CONTROLFILE_ATTRIBUTES'][Attr].strip()
+    if(Value != ''):
+      if(Attr[0:9] == 'filepath_'):
+        CfId += 1
+        #TemplateData  +=  '         <image name="&lt;OMF_CONTROL_%s>" filepath="%s"/>\n' % (str(CfId),Value)
+        TemplateData  +=  '         <image name="Controlfile%s>" filepath="%s"/>\n' % (str(CfId),Value)
+      else:
+        TemplateData  +=  '         <%s>%s</%s>\n' % (Attr, Value, Attr)
+  TemplateData  +=  '      </ControlfileAttributes>\n'
+
+  # Datafiles Section of the Template
+  # ------------------------------------
+  for TbsName in sorted(ConfigDict['TABLESPACES'].keys()):
+    TemplateData  +=  '      <DatafileAttributes id="%s">\n' % ConfigDict['TABLESPACES'][TbsName]['name']
+    TemplateData  +=  '         <tablespace>%s</tablespace>\n' % TbsName
+
+    Attr = 'temporary'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    TemplateData += '         <%s>%s</%s>\n' % (Attr, Value, Attr)
+
+    Attr = 'online'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    TemplateData += '         <%s>%s</%s>\n' % (Attr, Value, Attr)
+
+    Attr = 'status'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    TemplateData += '         <%s>%s</%s>\n' % (Attr, Value, Attr)
+
+    Attr = 'size'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    if(Value[-1:].upper() in ['K','M','G']):
+      Size = Value[0:-1]
+      Unit = Value[-1:] + 'B'
+    TemplateData  +=  '         <%s unit="%s">%s</%s>\n' % (Attr, Unit, Size, Attr)
+
+    Attr = 'reuse'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    TemplateData += '         <%s>%s</%s>\n' % (Attr, Value, Attr)
+
+    Attr = 'autoExtend'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    TemplateData += '         <%s>%s</%s>\n' % (Attr, Value, Attr)
+
+    Attr = 'increment'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    if(Value[-1:].upper() in ['K','M','G']):
+      Size = Value[0:-1]
+      Unit = Value[-1:] + 'B'
+    TemplateData  +=  '         <%s unit="%s">%s</%s>\n' % (Attr, Unit, Size, Attr)
+
+    Attr = 'maxSize'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    if(Value[-1:].upper() in ['K','M','G']):
+      Size = Value[0:-1]
+      Unit = Value[-1:] + 'B'
+    TemplateData  +=  '         <%s unit="%s">%s</%s>\n' % (Attr, Unit, Size, Attr)
+    TemplateData  +=  '      </DatafileAttributes>\n'
+
+  # Tablespaces Section of the Template
+  # ------------------------------------
+  for TbsName in sorted(ConfigDict['TABLESPACES'].keys()):
+    TemplateData  +=  '      <TablespaceAttributes id="%s">\n' % TbsName
+
+    Attr = 'online'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    TemplateData += '         <%s>%s</%s>\n' % (Attr, Value, Attr)
+
+    Attr = 'offlineMode'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    TemplateData += '         <%s>%s</%s>\n' % (Attr, Value, Attr)
+
+    Attr = 'readOnly'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    TemplateData += '         <%s>%s</%s>\n' % (Attr, Value, Attr)
+
+    Attr = 'temporary'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    TemplateData += '         <%s>%s</%s>\n' % (Attr, Value, Attr)
+
+    Attr = 'defaultTemp'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    TemplateData += '         <%s>%s</%s>\n' % (Attr, Value, Attr)
+
+    Attr = 'undo'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    TemplateData += '         <%s>%s</%s>\n' % (Attr, Value, Attr)
+
+    Attr = 'local'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    TemplateData += '         <%s>%s</%s>\n' % (Attr, Value, Attr)
+
+    Attr = 'blockSize'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    TemplateData += '         <%s>%s</%s>\n' % (Attr, Value, Attr)
+
+    Attr = 'allocation'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    TemplateData += '         <%s>%s</%s>\n' % (Attr, Value, Attr)
+
+    Attr = 'uniAllocSize'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    if(Value[-1:].upper() in ['K','M','G']):
+      Size = Value[0:-1]
+      Unit = Value[-1:] + 'B'
+    TemplateData  +=  '         <%s unit="%s">%s</%s>\n' % (Attr, Unit, Size, Attr)
+
+    Attr = 'initSize'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    if(Value[-1:].upper() in ['K','M','G']):
+      Size = Value[0:-1]
+      Unit = Value[-1:] + 'B'
+    TemplateData  +=  '         <%s unit="%s">%s</%s>\n' % (Attr, Unit, Size, Attr)
+
+    Attr = 'increment'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    if(Value[-1:].upper() in ['K','M','G']):
+      Size = Value[0:-1]
+      Unit = Value[-1:] + 'B'
+    TemplateData  +=  '         <%s unit="%s">%s</%s>\n' % (Attr, Unit, Size, Attr)
+
+    Attr = 'incrementPercent'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    TemplateData += '         <%s>%s</%s>\n' % (Attr, Value, Attr)
+
+    Attr = 'minExtends'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    TemplateData += '         <%s>%s</%s>\n' % (Attr, Value, Attr)
+
+    Attr = 'maxExtends'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    TemplateData += '         <%s>%s</%s>\n' % (Attr, Value, Attr)
+
+    Attr = 'minExtendsSize'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    if(Value[-1:].upper() in ['K','M','G']):
+      Size = Value[0:-1]
+      Unit = Value[-1:] + 'B'
+    TemplateData  +=  '         <%s unit="%s">%s</%s>\n' % (Attr, Unit, Size, Attr)
+
+    Attr = 'logging'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    TemplateData += '         <%s>%s</%s>\n' % (Attr, Value, Attr)
+
+    Attr = 'recoverable'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    TemplateData += '         <%s>%s</%s>\n' % (Attr, Value, Attr)
+
+    Attr = 'maxFreeSpace'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    TemplateData += '         <%s>%s</%s>\n' % (Attr, Value, Attr)
+
+    Attr = 'bigfile'
+    if (Attr in ConfigDict['TABLESPACES'][TbsName]):
+      Value = ConfigDict['TABLESPACES'][TbsName][Attr]
+    else:
+      Value = TbspDefaults[Attr]
+    TemplateData += '         <%s>%s</%s>\n' % (Attr, Value, Attr)
+
+    TemplateData  +=  '         <datafilesList>\n'
+    TemplateData  +=  '            <TablespaceDatafileAttributes id="%s"/>\n' % ConfigDict['TABLESPACES'][TbsName]['name']
+    TemplateData  +=  '         </datafilesList>\n'
+    TemplateData  +=  '      </TablespaceAttributes>\n'
+
+  # Redologs Section of the Template
+  # ------------------------------------
+  RedoThreads   = ConfigDict['REDO']['threads']
+  RedoGroups    = ConfigDict['REDO']['groups']
+  RedoMembers   = ConfigDict['REDO']['members']
+  RedoReuse     = ConfigDict['REDO']['reuse']
+  RedoSize      = ConfigDict['REDO']['fileSize']
+  RedoPrefix    = ConfigDict['REDO']['memberPrefix']
+  RedoFilePath  = ConfigDict['REDO']['filePath']
+  Offset        = 96
+
+  if (Trace):
+    print('\nRedo                 Value')
+    print('-------------------- ---------------------')
+    print('%-20s %s' %('RedoThreads',  RedoThreads ))
+    print('%-20s %s' %('RedoGroups',   RedoGroups  ))
+    print('%-20s %s' %('RedoMembers',  RedoMembers ))
+    print('%-20s %s' %('RedoReuse',    RedoReuse   ))
+    print('%-20s %s' %('RedoSize',     RedoSize    ))
+    print('%-20s %s' %('RedoPrefix',   RedoPrefix  ))
+    print('%-20s %s' %('RedoFilePath', RedoFilePath))
+
+  Size = ''
+  Unit = ''
+  if(RedoSize[-1:].upper() in ['K','M','G']):
+    Size = RedoSize[:-1].upper()
+    Unit = RedoSize[-1:].upper() + 'B'
+  elif(RedoSize[-1:].upper() == 'B'):
+    Size = RedoSize[:-1].upper()
+    Unit = RedoSize[-1:].upper()
+  else:
+    Size = RedoSize.upper()
+  for Thread in range(1, int(RedoThreads)+1):
+    for Group in range(1, int(RedoGroups)+1):
+      TemplateData  +=  '      <RedoLogGroupAttributes id="%s">\n' % str(Group)
+      TemplateData  +=  '         <reuse>%s</reuse>\n' % RedoReuse
+      if (Unit == ''):
+        TemplateData  +=  '         <fileSize>%s</fileSize>\n' % Size
+      else:
+        TemplateData  +=  '         <fileSize unit="%s">%s</fileSize>\n' % (Unit, Size)
+      TemplateData  +=  '         <Thread>%s</Thread>\n' % str(Thread)
+
+      if (int(RedoMembers) > 1):
+        for Member in range(1, int(RedoMembers)+1):
+          Pfx = chr(Offset+Member)
+          TemplateData  +=  '         <member ordinal="0" memberName="redo%s0%s%s.log" filepath="%s"/>\n' % (str(Thread), str(Group), Pfx, RedoFilePath)
+      else:
+        TemplateData  +=  '         <member ordinal="0" memberName="redo%s0%s.log" filepath="%s"/>\n' % (str(Thread), str(Group), RedoFilePath)
+      TemplateData  +=  '      </RedoLogGroupAttributes>\n'
+  TemplateData  +=  '   </StorageAttributes>\n'
+  TemplateData  +=  '</DatabaseTemplate>'
+
+  if(Show):
+    print('\n-----cut--------cut--------cut--------cut--------cut--------cut--------cut--------cut----');
+    print(TemplateData)
+    print('-----cut--------cut--------cut--------cut--------cut--------cut--------cut--------cut----\n');
+    return()
+
+  try:
+    Template = open(TemplateFile, 'w')
+    Template.write(TemplateData)
+    Template.close()
+  except:
+    print('\nUnable to to open template file for write: %s' % TemplateFile)
+    exit(1)
+  return()
+# ---------------------------------------------------------------------------
+# End GenerateTemplate()
+# ---------------------------------------------------------------------------
+
+# --------------------------------------
+# ---- Main Program --------------------
+# --------------------------------------
+if (__name__ == '__main__'):
+  Cmd            = basename(argv[0])
+  CmdDesc        = 'DBCA Silent Build (' + Cmd + ')'
+  Version        = '1.41'
+  VersionDate    = 'Thr Mar 06 10:00:00 CST 2018'
+  DevState       = 'Production'
+  Banner         = CmdDesc + ': Release ' + Version + ' '  + DevState + '. Last updated: ' + VersionDate
+  Now            = datetime.now()
+  DbName         = ''
+  DbUniqueName   = ''
+  ConfigDict     = {}
+  RemovedOptions = []
+
+  # ------------------------------------------------
+  # Imports that are conditional on Python Version.
+  # ------------------------------------------------
+  if (version_info[0] >= 3):
+    from configparser import SafeConfigParser
+  else:
+    from ConfigParser import SafeConfigParser
+  # ------------------------------------------------
+
+  # Process command line options
+  # ----------------------------------
+  #Usage = 'parms [options] [parm_filter]'
+  ArgParser = OptionParser()
+  ArgParser.add_option("-d",                       dest="DbName",        default='',                            type=str,   help="Database Name")
+  ArgParser.add_option("-f",                       dest="TemplateFile",  default='dbsb.dbt',                    type=str,   help="Template File Name")
+  ArgParser.add_option("-p",                       dest="ParFile",       default='',                            type=str,   help="Parameter File")
+  ArgParser.add_option("-u",                       dest="DbUniqueName",  default='',                            type=str,   help="Database Unique Name")
+  ArgParser.add_option("--s", action="store_true", dest="Show",          default=False,                                     help="Show Only")
+  ArgParser.add_option("--t", action="store_true", dest="Trace",         default=False,                                     help="Trace Output")
+  ArgParser.add_option("--v", action="store_true", dest="ShowVer",       default=False,                                     help="Version Information")
+
+  Options, args = ArgParser.parse_args()
+  argc = len(args)
+
+  ShowVer       = Options.ShowVer
+  ParFile       = Options.ParFile
+  DbName        = Options.DbName
+  TemplateFile  = Options.TemplateFile
+  DbUniqueName  = Options.DbUniqueName
+  Show          = Options.Show
+  Trace         = Options.Trace
+
+  if (ShowVer):
+    print('\n%s' % Banner)
+    exit()
+
+  # Tablespace Defaults
+  TbspDefaults = {}
+  TbspDefaults['allocation']       = '1'
+  TbspDefaults['autoSegmentMgmt']  = 'true'
+  TbspDefaults['autoExtend']       = 'true'
+  TbspDefaults['bigfile']          = 'true'
+  TbspDefaults['blockSize']        = '-1'
+  TbspDefaults['defaultTemp']      = 'false'
+  TbspDefaults['increment']        = '5M'
+  TbspDefaults['incrementPercent'] = '0'
+  TbspDefaults['initSize']         = '128K'
+  TbspDefaults['local']            = 'true'
+  TbspDefaults['logging']          = 'true'
+  TbspDefaults['maxExtends']       = '4096'
+  TbspDefaults['maxFreeSpace']     = '0'
+  TbspDefaults['maxSize']          = '-1M'
+  TbspDefaults['minExtends']       = '1'
+  TbspDefaults['minExtendsSize']   = '128K'
+  TbspDefaults['name']             = '+DATA'
+  TbspDefaults['offlineMode']      = '1'
+  TbspDefaults['online']           = 'true'
+  TbspDefaults['readOnly']         = 'false'
+  TbspDefaults['recoverable']      = 'false'
+  TbspDefaults['reuse']            = 'false'
+  TbspDefaults['size']             = '1M'
+  TbspDefaults['status']           = '0'
+  TbspDefaults['temporary']        = 'false'
+  TbspDefaults['undo']             = 'false'
+  TbspDefaults['uniAllocSize']     = '-1K'
+
+  if(Trace):
+    print("\nTbspDefaults")
+    print('%-40s %-70s' % ('Parm', 'Value'))
+    print('%-40s %-70s' % ('----------------------------------------', '--------------------------------------------------'))
+    for parm in sorted(TbspDefaults):
+      print('%-40s %-70s' % (parm, TbspDefaults[parm]))
+
+  if (DbName == ''):
+    if (version_info[0] >= 3):
+      DbName = input('\nEnter database name: ')
+    else:
+      DbName = raw_input('\nEnter database name: ')
+    if (DbName == ''):
+      print('\nDatabase name is required, ex:\n\n    %s -d MYDB' % (Cmd))
+      exit(1)
+
+  if (DbUniqueName == ''):
+    if (version_info[0] >= 3):
+      DbUniqueName = input('\nEnter database unique name: ')
+    else:
+      DbUniqueName = raw_input('\nEnter database unique name: ')
+    if (DbUniqueName == ''):
+      print('\nAssuming db_unique_name = db_name')
+      DbUniqueName = DbName
+
+  if (ParFile != ''):
+    try:
+      f = open(ParFile, 'r')
+      f.close()
+    except:
+      PrintMessage('error', 'Cannot open parameter file for read: %s' % ParFile)
+      exit(1)
+
+  # Set default values.
+  # --------------------
+  DefaultsDict = LoadDefaults()
+
+  # Load/initialize ConfigDict.
+  # --------------------------------
+  ConfigDict = LoadParfile(ParFile)
+
+  # Merge defaults into ConfigDict.
+  # --------------------------------
+  ConfigDict = MergeParms(ConfigDict, DefaultsDict)
+
+  # Special case override for command line options.
+  # -------------------------------------------------
+  if(TemplateFile != ''):
+    ConfigDict['DBCA_COMMAND_LINE']['templateName'] = TemplateFile
+  # End command line overrides.
+
+  DbcaArgs = ['-createDatabase','-silent']
+  for Attr in sorted(ConfigDict['DBCA_COMMAND_LINE']):
+    if (Attr == 'templateName'):
+      DbcaArgs.append('-' + Attr + ' ' + TemplateFile)
+    else:
+      if (Attr == 'nodelist'):
+        Value = ','.join(ConfigDict['DBCA_COMMAND_LINE'][Attr])
+      else:
+        Value = ConfigDict['DBCA_COMMAND_LINE'][Attr]
+      DbcaArgs.append('-' + Attr + ' ' + Value)
+
+  print('\n============================================================================================================================')
+  print('%s: Release %s Production, %28s %44s' % (CmdDesc, Version, VersionDate, Now.strftime("%Y-%m-%d %H:%M")))
+  print('============================================================================================================================')
+  print('')
+  print('This script creates a new database using dbca silent mode.')
+  print('')
+  print('The following settings will be used:')
+  print(' Database Name:                 : %s' % DbName)
+  print(' Database Unique Name           : %s' % DbUniqueName)
+  print(' Oracle Version                 : %s' % ConfigDict['DBSB']['oracle_version'])
+  print(' Oracle Base                    : %s' % ConfigDict['DBSB']['oracle_base'])
+  print(' Oracle Home                    : %s' % ConfigDict['DBSB']['oracle_home'])
+  print(' Configuration File Name        : %s' % ParFile)
+  print(' DBCA Command Line Options      : ' + '  \n                                : '.join(DbcaArgs))
+
+  (ConfigDict, RemovedOptions) = CheckForIncompat(ConfigDict['DBSB']['oracle_version'], ConfigDict, DbcaArgs)
+
+  ###~ if (RemovedOptions != []):
+  ###~   print('\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<')
+  ###~   print('The following command line option(s) are invalid for Oracle %s and have been' % OraVers)
+  ###~   print('removed from the configuration:')
+  ###~   for Option in RemovedOptions:
+  ###~     print('  -%s' % Option)
+  ###~   print('>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>><<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<')
+
+  # Generate dbca template...
+  GenerateTemplate(ConfigDict, TbspDefaults)
+
+  print("\nRun dbca as follows:")
+  print('\n$ORACLE_HOME/bin/dbca -silent -createDatabase  \\')
+  print('  -sid                         %s \\' % ConfigDict['DBCA_COMMAND_LINE']['sid'])
+  print('  -gdbName                     %s \\' % ConfigDict['DBCA_COMMAND_LINE']['gdbName'])
+  print('  -initParams                  %s \\' % ConfigDict['DBCA_COMMAND_LINE']['initParams'])
+  #print('   -nodelist                   %s \\' % ','.join(ConfigDict['DBCA_COMMAND_LINE']['nodelist']))
+  #print('   -storageType                %s \\' % ConfigDict['DBCA_COMMAND_LINE']['storageType'])
+  #print('   -databaseConfType           %s \\' % ConfigDict['DBCA_COMMAND_LINE']['databaseConfType'])
+  print('  -templateName                %s \\' % ConfigDict['DBCA_COMMAND_LINE']['templateName'])
+  #print('   -createAsContainerDatabase  %s \\' % ConfigDict['DBCA_COMMAND_LINE']['createAsContainerDatabase'])
+  print('  -emConfiguration             %s \\' % ConfigDict['DBCA_COMMAND_LINE']['emConfiguration'])
+  #print('   -diskGroupName              %s \\' % ConfigDict['DBCA_COMMAND_LINE']['diskGroupName'])
+  #print('   -recoveryGroupName          %s \\' % ConfigDict['DBCA_COMMAND_LINE']['recoveryGroupName'])
+  #print('   -dvConfiguration            %s \\' % ConfigDict['DBCA_COMMAND_LINE']['dvConfiguration'])
+  #print('   -olsConfiguration           %s \\' % ConfigDict['DBCA_COMMAND_LINE']['olsConfiguration'])
+  print('  -sysPassword                 %s \\' % ConfigDict['DBCA_COMMAND_LINE']['sysPassword'])
+  print('  -systemPassword              %s \\' % ConfigDict['DBCA_COMMAND_LINE']['systemPassword'])
+  print('  -dbsnmpPassword              %s \\' % ConfigDict['DBCA_COMMAND_LINE']['dbsnmpPassword'])
+  print('  -runCVUChecks                %s'    % ConfigDict['DBCA_COMMAND_LINE']['runCVUChecks'])
+  exit(0)
+# --------------------------------------
+# ---- End Main Program ----------------
+# --------------------------------------
+
