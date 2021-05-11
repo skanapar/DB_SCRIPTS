@@ -29,5 +29,5 @@ return true;
 end;
 /
 show errors
-grant execute on PALM_PW_VERIFY_FUNCTION to public
+grant execute on ACME_PW_VERIFY_FUNCTION to public
 /
